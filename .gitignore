@@ -146,4 +146,5 @@ vite.config.ts.timestamp-*
 # Local clone of overleaf/overleaf monorepo used as research reference; not tracked
 overleaf/
 .DS_Store
+.worktrees/
 
