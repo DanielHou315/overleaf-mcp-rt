@@ -57,3 +57,23 @@ describe('OverleafRest.listProjects', () => {
     await expect(makeRest().listProjects()).rejects.toThrow(/prefetchedProjectsBlob/)
   })
 })
+
+import { readFileSync as _read } from 'node:fs'
+const projectZip = _read(join(FIXTURES, 'project.zip'))
+
+describe('OverleafRest.downloadProjectZip', () => {
+  it('returns the zip bytes', async () => {
+    server.use(
+      http.get('https://o.example/project/p1/download/zip', () =>
+        HttpResponse.arrayBuffer(
+          projectZip.buffer.slice(
+            projectZip.byteOffset,
+            projectZip.byteOffset + projectZip.byteLength,
+          ),
+        ),
+      ),
+    )
+    const buf = await makeRest().downloadProjectZip('p1')
+    expect(buf.equals(projectZip)).toBe(true)
+  })
+})
