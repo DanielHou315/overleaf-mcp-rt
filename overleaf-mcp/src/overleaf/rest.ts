@@ -65,4 +65,48 @@ export class OverleafRest {
     const arrayBuf = await res.arrayBuffer()
     return Buffer.from(arrayBuf)
   }
+
+  async compile(
+    projectId: string,
+    opts: { draft?: boolean; stopOnFirstError?: boolean; rootResourcePath?: string } = {},
+  ): Promise<CompileResponse> {
+    const res = await this.http.postJson(
+      `/project/${encodeURIComponent(projectId)}/compile?auto_compile=true`,
+      {
+        check: 'silent',
+        draft: opts.draft ?? false,
+        incrementalCompilesEnabled: true,
+        rootResourcePath: opts.rootResourcePath ?? 'main.tex',
+        stopOnFirstError: opts.stopOnFirstError ?? false,
+      },
+    )
+    if (!res.ok) {
+      throw new OverleafError('OVERLEAF_GENERIC', `compile returned ${res.status}`)
+    }
+    return (await res.json()) as CompileResponse
+  }
+
+  async downloadOutputFile(buildUrl: string): Promise<Buffer> {
+    const res = await this.http.get(buildUrl)
+    if (!res.ok) {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `output file ${buildUrl} returned ${res.status}`,
+      )
+    }
+    return Buffer.from(await res.arrayBuffer())
+  }
+
+  async downloadFile(projectId: string, fileId: string): Promise<Buffer> {
+    const res = await this.http.get(
+      `/project/${encodeURIComponent(projectId)}/file/${encodeURIComponent(fileId)}`,
+    )
+    if (!res.ok) {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `file ${fileId} returned ${res.status}`,
+      )
+    }
+    return Buffer.from(await res.arrayBuffer())
+  }
 }
