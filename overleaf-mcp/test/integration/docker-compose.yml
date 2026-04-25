@@ -1,0 +1,21 @@
+services:
+  sharelatex:
+    image: sharelatex/sharelatex:5.5.4
+    ports:
+      - "8080:80"
+    environment:
+      OVERLEAF_LISTEN_IP: 0.0.0.0
+      OVERLEAF_APP_NAME: "Overleaf Test"
+      OVERLEAF_MONGO_URL: "mongodb://mongo/sharelatex?directConnection=true"
+      OVERLEAF_REDIS_HOST: redis
+      REDIS_HOST: redis
+      OVERLEAF_SESSION_SECRET: testsecret
+      OVERLEAF_BEHIND_PROXY: "true"
+    depends_on:
+      - mongo
+      - redis
+  mongo:
+    image: mongo:6
+    command: --replSet overleaf
+  redis:
+    image: redis:6
