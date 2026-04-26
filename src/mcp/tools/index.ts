@@ -79,7 +79,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'write_doc',
-    description: 'Replace a text doc by path within a project. Edits flow as live OT ops; no "file changed externally" toast.',
+    description: 'Replace a text doc by path. Edits flow as live OT ops; collaborators see fine-grained changes, not a "file changed externally" toast. Returns a summary {versionBefore, versionAfter, charsBefore, charsAfter, charsDelta, opsApplied}. For surgical edits prefer edit_doc.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -92,7 +92,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'apply_patch',
-    description: 'Advanced: emit raw OT ops [{p,i?,d?}] against a doc at its current version. Each op must have exactly one of `i` (insert) or `d` (delete). For most use cases prefer write_doc.',
+    description: 'Advanced: emit raw OT ops [{p,i?,d?}] against a doc. Each op must have exactly one of `i` (insert) or `d` (delete); a `d`-string that does not match the doc at p surfaces as OT_DELETE_MISMATCH. For most use cases prefer edit_doc, which resolves anchors → OT positions for you. apply_patch is here for callers that already have positions computed.',
     inputSchema: {
       type: 'object',
       properties: {

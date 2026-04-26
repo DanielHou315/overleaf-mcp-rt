@@ -1,6 +1,6 @@
 {
   "name": "overleaf-mcp-rt",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Real-time MCP server for self-hosted Overleaf Community Edition. Lets AI coding agents read, write, and compile LaTeX projects via Overleaf's native operational-transform pipeline — no git-bridge or Server Pro required. The 'rt' is for real-time, distinct from git-bridge-style integrations.",
   "license": "AGPL-3.0-or-later",
   "author": "Daniel Hou (https://github.com/DanielHou315)",
