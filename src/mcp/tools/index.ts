@@ -6,6 +6,7 @@ import {
 import type { ServerContext } from '../server.js'
 import { handleListProjects, handleGetProjectTree } from './projects.js'
 import { handleReadDoc, handleReadFile, handleWriteDoc, handleApplyPatch } from './docs.js'
+import { handleReadDocRange } from './range.js'
 import { handleCompile, handleReadCompileLog, handleDownloadPdf } from './compile.js'
 import {
   handleCreateDoc,
@@ -42,6 +43,22 @@ const TOOL_DEFINITIONS = [
       properties: {
         projectId: { type: 'string' },
         path: { type: 'string' },
+      },
+      required: ['projectId', 'path'],
+    },
+  },
+  {
+    name: 'read_doc_range',
+    description: 'Read a substring of a text doc by line range (startLine/endLine, 1-indexed inclusive) or by offset/length. Returns totalLines and totalChars for context.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        path: { type: 'string' },
+        startLine: { type: 'integer', minimum: 1 },
+        endLine: { type: 'integer', minimum: 1 },
+        startOffset: { type: 'integer', minimum: 0 },
+        length: { type: 'integer', minimum: 0 },
       },
       required: ['projectId', 'path'],
     },
@@ -223,6 +240,13 @@ export function registerAllTools(server: Server, ctx: ServerContext) {
           return wrap(await handleGetProjectTree(ctx, args as { projectId: string }))
         case 'read_doc':
           return wrap(await handleReadDoc(ctx, args as { projectId: string; path: string }))
+        case 'read_doc_range':
+          return wrap(
+            await handleReadDocRange(
+              ctx,
+              args as { projectId: string; path: string; startLine?: number; endLine?: number; startOffset?: number; length?: number },
+            ),
+          )
         case 'read_file': {
           const args2 = args as { projectId: string; path: string }
           const result = await handleReadFile(ctx, args2)
