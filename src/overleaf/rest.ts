@@ -79,12 +79,18 @@ export class OverleafRest {
     return (await res.json()) as CompileResponse
   }
 
-  async downloadOutputFile(buildUrl: string): Promise<DownloadedBytes> {
-    const res = await this.http.get(buildUrl)
+  async downloadOutputFile(
+    buildUrl: string,
+    pdfDownloadDomain?: string,
+  ): Promise<DownloadedBytes> {
+    const url = pdfDownloadDomain && buildUrl.startsWith('/')
+      ? pdfDownloadDomain.replace(/\/+$/, '') + buildUrl
+      : buildUrl
+    const res = await this.http.get(url)
     if (!res.ok) {
       throw new OverleafError(
         'OVERLEAF_GENERIC',
-        `output file ${buildUrl} returned ${res.status}`,
+        `output file ${url} returned ${res.status}`,
       )
     }
     const bytes = Buffer.from(await res.arrayBuffer())
