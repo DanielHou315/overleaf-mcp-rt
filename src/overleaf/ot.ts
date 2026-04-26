@@ -77,6 +77,7 @@ export class OtEngine {
       let gotProject = false
       const finishIfReady = () => {
         if (gotPublicId && gotProject) {
+          this.installTreeEventHandlers()
           this._isConnected = true
           resolve()
         }
@@ -285,6 +286,86 @@ export class OtEngine {
     })
   }
 
+  private installTreeEventHandlers(): void {
+    this.installListener('reciveNewDoc', (parentFolderId: unknown, doc: unknown) =>
+      this.applyNewEntity(parentFolderId as string, doc as DocEntity, 'doc'),
+    )
+    this.installListener('reciveNewFile', (parentFolderId: unknown, file: unknown) =>
+      this.applyNewEntity(parentFolderId as string, file as FileRefEntity, 'file'),
+    )
+    this.installListener('reciveNewFolder', (parentFolderId: unknown, folder: unknown) =>
+      this.applyNewEntity(parentFolderId as string, folder as FolderEntity, 'folder'),
+    )
+    this.installListener('reciveEntityRename', (entityId: unknown, newName: unknown) =>
+      this.applyRename(entityId as string, newName as string),
+    )
+    this.installListener('reciveEntityMove', (entityId: unknown, newParentId: unknown) =>
+      this.applyMove(entityId as string, newParentId as string),
+    )
+    this.installListener('removeEntity', (entityId: unknown) =>
+      this.applyRemove(entityId as string),
+    )
+  }
+
+  private applyNewEntity(
+    parentFolderId: string,
+    entity: DocEntity | FileRefEntity | FolderEntity,
+    kind: 'doc' | 'file' | 'folder',
+  ): void {
+    const project = this.getProject()
+    if (!project) return
+    const parent = findFolder(project.rootFolder[0]!, parentFolderId)
+    if (!parent) return
+    if (kind === 'doc') parent.docs.push(entity as DocEntity)
+    else if (kind === 'file') parent.fileRefs.push(entity as FileRefEntity)
+    else parent.folders.push(entity as FolderEntity)
+    this.rebuildPathIndex()
+  }
+
+  private applyRename(entityId: string, newName: string): void {
+    const project = this.getProject()
+    if (!project) return
+    const found = findEntity(project.rootFolder[0]!, entityId)
+    if (!found) return
+    found.entity.name = newName
+    this.rebuildPathIndex()
+  }
+
+  private applyMove(entityId: string, newParentId: string): void {
+    const project = this.getProject()
+    if (!project) return
+    const target = findEntity(project.rootFolder[0]!, entityId)
+    const newParent = findFolder(project.rootFolder[0]!, newParentId)
+    if (!target || !newParent) return
+    // Remove from old parent
+    const arr = this.containerArray(target.parent, target.kind)
+    const idx = arr.findIndex((e) => e._id === entityId)
+    if (idx >= 0) arr.splice(idx, 1)
+    // Add to new parent
+    const newArr = this.containerArray(newParent, target.kind)
+    newArr.push(target.entity as never)
+    this.rebuildPathIndex()
+  }
+
+  private applyRemove(entityId: string): void {
+    const project = this.getProject()
+    if (!project) return
+    const found = findEntity(project.rootFolder[0]!, entityId)
+    if (!found) return
+    const arr = this.containerArray(found.parent, found.kind)
+    const idx = arr.findIndex((e) => e._id === entityId)
+    if (idx >= 0) arr.splice(idx, 1)
+    this.rebuildPathIndex()
+    // Drop any cached baseline for this doc
+    this.clearBaseline(entityId)
+  }
+
+  private containerArray(folder: FolderEntity, kind: 'doc' | 'file' | 'folder'): Array<{ _id: string; name: string }> {
+    if (kind === 'doc') return folder.docs
+    if (kind === 'file') return folder.fileRefs
+    return folder.folders as unknown as Array<{ _id: string; name: string }>
+  }
+
   /** Disconnect socket, flush handlers. */
   disconnect(): void {
     for (const { event, handler } of this.installedHandlers) {
@@ -380,4 +461,31 @@ function applyOpsLocal(text: string, ops: OtOp[]): string {
     }
   }
   return out
+}
+
+type EntityKind = 'doc' | 'file' | 'folder'
+interface FoundEntity {
+  entity: DocEntity | FileRefEntity | FolderEntity
+  parent: FolderEntity
+  kind: EntityKind
+}
+
+function findEntity(folder: FolderEntity, id: string): FoundEntity | null {
+  for (const d of folder.docs) if (d._id === id) return { entity: d, parent: folder, kind: 'doc' }
+  for (const f of folder.fileRefs) if (f._id === id) return { entity: f, parent: folder, kind: 'file' }
+  for (const sub of folder.folders) {
+    if (sub._id === id) return { entity: sub, parent: folder, kind: 'folder' }
+    const inner = findEntity(sub, id)
+    if (inner) return inner
+  }
+  return null
+}
+
+function findFolder(folder: FolderEntity, id: string): FolderEntity | null {
+  if (folder._id === id) return folder
+  for (const sub of folder.folders) {
+    const inner = findFolder(sub, id)
+    if (inner) return inner
+  }
+  return null
 }
