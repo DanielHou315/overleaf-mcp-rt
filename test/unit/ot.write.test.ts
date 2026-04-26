@@ -116,3 +116,23 @@ describe('OtEngine.writeDoc', () => {
     expect(engine.readDoc('d1')).toBe('hello!')
   })
 })
+
+describe('OtEngine never emits clientTracking', () => {
+  it('writeDoc + joinDoc + tree-event handling never emit clientTracking.updatePosition', async () => {
+    const { sock, engine } = await readyEngine()
+    sock.respondToEmit('applyOtUpdate', () => {
+      queueMicrotask(() => sock.simulate('otUpdateApplied', {
+        doc: 'd1',
+        op: [{ p: 5, i: '!' }],
+        v: 4,
+        meta: { source: 'pub-AGENT', ts: 0, user_id: 'u' },
+      }))
+      return [null]
+    })
+    await engine.writeDoc('d1', 'hello!')
+    sock.simulate('reciveNewDoc', 'root', { _id: 'd2', name: 'extra.tex' })
+
+    expect(sock.emitsOf('clientTracking.updatePosition')).toHaveLength(0)
+    expect(sock.emitsOf('clientTracking.getConnectedUsers')).toHaveLength(0)
+  })
+})
