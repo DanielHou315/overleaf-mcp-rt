@@ -49,13 +49,17 @@ function buildOtTestCtx() {
     csrfToken: 'csrf',
   })
   // Override the OT factory to inject our FakeSocket for tests
+  const engineCache = new Map<string, OtEngine>()
   ;(ctx as unknown as { ot: { get: (p: string) => Promise<OtEngine> } }).ot = {
     async get(projectId: string) {
+      const cached = engineCache.get(projectId)
+      if (cached) return cached
       const engine = new OtEngine({ socket: sock, projectId })
       const cp = engine.connect()
       sock.simulate('connectionAccepted', null, 'pub-AGENT')
       sock.simulate('joinProjectResponse', minimalJoinResponse(projectId))
       await cp
+      engineCache.set(projectId, engine)
       return engine
     },
   }
@@ -88,16 +92,22 @@ describe('list_projects tool', () => {
   })
 })
 
-describe('get_project_tree tool', () => {
-  it('returns the parsed tree', async () => {
-    server.use(
-      http.get('https://o.example/project/p1/download/zip', () =>
-        HttpResponse.arrayBuffer(arrayBufferOf(projectZip)),
-      ),
-    )
+describe('get_project_tree tool (OT-backed)', () => {
+  it('returns the live tree from OT state', async () => {
+    const { ctx } = buildOtTestCtx()
     const out = await handleGetProjectTree(ctx, { projectId: 'p1' })
-    expect(out.tree.files.sort()).toEqual(['main.tex', 'refs.bib'])
-    expect(out.tree.folders.figures!.files).toEqual(['img.png'])
+    expect(out.tree.files.sort()).toEqual(['figures.png', 'main.tex'])
+    expect(Object.keys(out.tree.folders)).toEqual([])
+  })
+
+  it('reflects mid-session tree mutations from other clients', async () => {
+    const { ctx, sock } = buildOtTestCtx()
+    // First get caches the engine
+    const engine = await ctx.ot.get('p1')
+    sock.simulate('reciveNewDoc', 'root', { _id: 'd2', name: 'extra.tex' })
+    const out = await handleGetProjectTree(ctx, { projectId: 'p1' })
+    expect(out.tree.files.sort()).toEqual(['extra.tex', 'figures.png', 'main.tex'])
+    void engine
   })
 })
 
