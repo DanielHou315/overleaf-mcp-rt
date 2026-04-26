@@ -136,3 +136,30 @@ describe('OverleafRest.renameEntity', () => {
     await expect(makeRest().renameEntity('p1', 'doc', 'd-x', 'y')).rejects.toThrow(/400/)
   })
 })
+
+describe('OverleafRest.moveEntity', () => {
+  it.each([
+    ['doc', 'd-x'],
+    ['file', 'f-x'],
+    ['folder', 'fold-x'],
+  ] as const)('POSTs folder_id to /project/p1/%s/:id/move', async (kind, id) => {
+    let bodyJson: unknown = null
+    server.use(
+      http.post(`https://o.example/project/p1/${kind}/${id}/move`, async ({ request }) => {
+        bodyJson = await request.json()
+        return new HttpResponse(null, { status: 200 })
+      }),
+    )
+    await makeRest().moveEntity('p1', kind, id, 'new-parent')
+    expect(bodyJson).toEqual({ folder_id: 'new-parent' })
+  })
+
+  it('throws on non-OK', async () => {
+    server.use(
+      http.post('https://o.example/project/p1/doc/d-x/move', () =>
+        HttpResponse.text('forbidden', { status: 403 }),
+      ),
+    )
+    await expect(makeRest().moveEntity('p1', 'doc', 'd-x', 'np')).rejects.toThrow(/403/)
+  })
+})

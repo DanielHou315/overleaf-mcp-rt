@@ -205,6 +205,25 @@ export class OverleafRest {
     return { id: json.entity_id, kind: json.entity_type }
   }
 
+  /** Move an entity to a new parent folder. Workshop ref: moveEntity. */
+  async moveEntity(
+    projectId: string,
+    kind: 'doc' | 'file' | 'folder',
+    entityId: string,
+    newParentFolderId: string,
+  ): Promise<void> {
+    const res = await this.http.postJson(
+      `/project/${encodeURIComponent(projectId)}/${kind}/${encodeURIComponent(entityId)}/move`,
+      { folder_id: newParentFolderId },
+    )
+    if (!res.ok) {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `moveEntity ${kind} ${entityId} returned ${res.status}`,
+      )
+    }
+  }
+
   /** Rename an entity. Workshop ref: renameEntity. */
   async renameEntity(
     projectId: string,
