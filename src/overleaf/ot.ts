@@ -68,6 +68,8 @@ export class OtEngine {
   private installedHandlers: Array<{ event: string; handler: (...args: unknown[]) => void }> = []
   private baselines = new Map<string, DocBaseline>()
   private inflightJoinDoc = new Map<string, Promise<DocBaseline>>()
+  /** Per-docId promise chain for write serialization. */
+  private writeQueues = new Map<string, Promise<void>>()
 
   constructor(opts: OtEngineOptions) {
     this.currentSocket = opts.socket
@@ -283,7 +285,22 @@ export class OtEngine {
    * `apply_patch` tool routes here.
    */
   async applyOps(docId: string, ops: OtOp[]): Promise<void> {
-    return this.applyOpsWithResync(docId, ops, /* attemptsLeft */ 1)
+    // Chain onto any in-flight write for the same docId so concurrent
+    // callers can't both read the same baseline. Across different docIds,
+    // calls run in parallel.
+    const previous = this.writeQueues.get(docId) ?? Promise.resolve()
+    const next = previous
+      .catch(() => undefined) // a prior failure must not block the next caller
+      .then(() => this.applyOpsWithResync(docId, ops, /* attemptsLeft */ 1))
+    this.writeQueues.set(docId, next)
+    try {
+      await next
+    } finally {
+      // If we're the tail of the queue, clear the entry so the map doesn't grow.
+      if (this.writeQueues.get(docId) === next) {
+        this.writeQueues.delete(docId)
+      }
+    }
   }
 
   private async applyOpsWithResync(docId: string, ops: OtOp[], attemptsLeft: number): Promise<void> {
