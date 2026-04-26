@@ -14,6 +14,12 @@ export interface TreeNode {
   folders: Record<string, TreeNode>
 }
 
+export interface DocBaseline {
+  docId: string
+  text: string
+  version: number
+}
+
 interface PathEntry {
   kind: 'doc' | 'file' | 'folder'
   id: string
@@ -45,6 +51,8 @@ export class OtEngine {
 
   /** Listener handles we install — cleaned up on disconnect(). */
   private installedHandlers: Array<{ event: string; handler: (...args: unknown[]) => void }> = []
+  private baselines = new Map<string, DocBaseline>()
+  private inflightJoinDoc = new Map<string, Promise<DocBaseline>>()
 
   constructor(opts: OtEngineOptions) {
     this.socket = opts.socket
@@ -124,6 +132,53 @@ export class OtEngine {
     return root
   }
 
+  /**
+   * Join a doc and cache its baseline. Idempotent within a session — a
+   * second call returns the cached baseline without re-emitting joinDoc.
+   * Concurrent calls for the same docId are coalesced.
+   */
+  async joinDoc(docId: string): Promise<DocBaseline> {
+    if (!this._isConnected) {
+      throw new OverleafError('OVERLEAF_GENERIC', 'OtEngine not connected')
+    }
+    const cached = this.baselines.get(docId)
+    if (cached) return cached
+    const inflight = this.inflightJoinDoc.get(docId)
+    if (inflight) return inflight
+
+    const promise = this.socket
+      .emitWithAck('joinDoc', docId, { encodeRanges: true })
+      .then((data) => {
+        const [lines, version] = data as [string[], number, ...unknown[]]
+        const text = decodeLatin1Lines(lines)
+        const baseline: DocBaseline = { docId, text, version }
+        this.baselines.set(docId, baseline)
+        this.inflightJoinDoc.delete(docId)
+        return baseline
+      })
+      .catch((err: unknown) => {
+        this.inflightJoinDoc.delete(docId)
+        throw err
+      })
+    this.inflightJoinDoc.set(docId, promise)
+    return promise
+  }
+
+  /** Return the cached baseline text for a doc, or null if not joined yet. */
+  readDoc(docId: string): string | null {
+    return this.baselines.get(docId)?.text ?? null
+  }
+
+  /** For internal use by Tasks 8/9 — read or fetch the baseline. */
+  protected getBaseline(docId: string): DocBaseline | undefined {
+    return this.baselines.get(docId)
+  }
+
+  /** For internal use by Task 9's resync path. */
+  protected clearBaseline(docId: string): void {
+    this.baselines.delete(docId)
+  }
+
   /** Disconnect socket, flush handlers. */
   disconnect(): void {
     for (const { event, handler } of this.installedHandlers) {
@@ -175,4 +230,15 @@ export class OtEngine {
       this.populateTreeNode(child, sub)
     }
   }
+}
+
+/**
+ * Overleaf packs UTF-8 doc bytes through latin1 over the Socket.IO transport.
+ * Each line comes back as a latin1 string whose char codes are the original
+ * UTF-8 byte values; reconstruct UTF-8 by treating the chars as latin1 bytes.
+ *
+ * Workshop reference: src/api/socketio.ts joinDoc handler.
+ */
+function decodeLatin1Lines(lines: string[]): string {
+  return lines.map((line) => Buffer.from(line, 'latin1').toString('utf-8')).join('\n')
 }
