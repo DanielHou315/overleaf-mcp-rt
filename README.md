@@ -191,6 +191,29 @@ This is the first stable release on npm. It bundles everything from the prior in
 
 Pre-1.0 development happened under internal v0.1–v0.4 milestones; those are now collapsed into v1.0 and per-phase notes are kept only in [`docs/superpowers/plans/`](docs/superpowers/) for historical context.
 
+## Roadmap
+
+### v1.x — full CLI parity + agent-facing skills
+
+Today every tool listed above is reachable via MCP only; the bundled CLI just covers `login`, `ls`, and `diagnose`. Some agents (Codex CLI, Aider, terminal-only setups, anything that would rather shell out than pay tokens on an MCP envelope) are happier driving a normal command-line tool. Planned for v1.x:
+
+- **CLI parity for every MCP tool** — one subcommand per tool, JSON output by default so agents can parse it, `--human` for tty-friendly tables. Sketch:
+  - `overleaf-mcp-rt projects ls` / `tree <projectId>`
+  - `overleaf-mcp-rt doc read <projectId> <path>` / `write <projectId> <path>` (stdin) / `patch <projectId> <path> <ops.json>`
+  - `overleaf-mcp-rt file read <projectId> <path>` / `upload <projectId> <parentPath> <name> <file>`
+  - `overleaf-mcp-rt fs mkdir | mv | rm | rename`
+  - `overleaf-mcp-rt compile <projectId> [--draft] [--stop-on-first-error]` / `log` / `pdf -o out.pdf`
+- **Agent skills for the CLI** — a `skills/` directory shipped with the package, in [Claude Code skills](https://docs.claude.com/en/docs/claude-code/skills) format (also usable by other agents that ingest skill-style instructions). Each skill teaches the canonical Overleaf workflow on top of the CLI: edit-then-compile-then-read-log, upload-figure-and-cite, refactor-bibliography, recover-from-compile-error. Drop them into `~/.claude/skills/` (or invoke directly) so the agent uses the CLI competently without you re-explaining the workflow each session.
+- **Same env, two surfaces** — `OVERLEAF_URL` / `OVERLEAF_SESSION_COOKIE` / `OVERLEAF_EXTRA_HEADERS` apply to both modes. The MCP server stays the default invocation for back-compat; the CLI is additive.
+
+### Beyond v1.x
+
+- Cursor rules and Continue tool definitions in a `recipes/` directory.
+- `overleaf-mcp-rt watch` — mirror a local directory into a project as you edit it, for non-MCP workflows.
+- Optional in-process snapshot history for project-level rollback.
+
+Track or contribute via [GitHub issues](https://github.com/DanielHou315/overleaf-mcp-rt/issues).
+
 ## FAQ
 
 **Does this require Overleaf Server Pro?**
