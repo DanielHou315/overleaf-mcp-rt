@@ -310,7 +310,7 @@ export function registerAllTools(server: Server, ctx: ServerContext) {
     } catch (err) {
       if (err instanceof OverleafError) {
         return {
-          content: [{ type: 'text', text: `${err.code}: ${err.message}` }],
+          content: [{ type: 'text', text: JSON.stringify(err.toEnvelope(), null, 2) }],
           isError: true,
         }
       }
