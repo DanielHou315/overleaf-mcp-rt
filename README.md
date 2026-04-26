@@ -41,17 +41,88 @@ npx overleaf-mcp ls
 }
 ```
 
-## Reverse-proxy auth (Cloudflare Access, basic auth, …)
+## Reverse-proxy auth (worked examples)
+
+Many self-hosted Overleaf deployments are fronted by an authentication proxy. `OVERLEAF_EXTRA_HEADERS` is a JSON object whose keys/values are merged into every REST request **and** the Socket.IO upgrade — both layers see the same headers.
+
+### Cloudflare Access (service token)
+
+Generate a service token in the Zero Trust dashboard, then:
 
 ```jsonc
-"env": {
-  "OVERLEAF_URL": "https://overleaf.example.com",
-  "OVERLEAF_SESSION_COOKIE": "overleaf_session2=s%3A...",
-  "OVERLEAF_EXTRA_HEADERS": "{\"CF-Access-Client-Id\":\"abc.access\",\"CF-Access-Client-Secret\":\"...\"}"
+{
+  "mcpServers": {
+    "overleaf": {
+      "command": "npx",
+      "args": ["-y", "overleaf-mcp@latest"],
+      "env": {
+        "OVERLEAF_URL": "https://overleaf.corp.example",
+        "OVERLEAF_SESSION_COOKIE": "overleaf.sid=s%3A...",
+        "OVERLEAF_EXTRA_HEADERS": "{\"CF-Access-Client-Id\":\"abc.access\",\"CF-Access-Client-Secret\":\"...\"}"
+      }
+    }
+  }
 }
 ```
 
-The headers in `OVERLEAF_EXTRA_HEADERS` are merged into both REST requests **and** the WebSocket handshake.
+The pair `CF-Access-Client-Id` / `CF-Access-Client-Secret` is a CF service-token credential.
+
+### HTTP Basic Auth in front of Overleaf
+
+```jsonc
+"env": {
+  "OVERLEAF_URL": "https://overleaf.corp.example",
+  "OVERLEAF_SESSION_COOKIE": "overleaf.sid=s%3A...",
+  "OVERLEAF_EXTRA_HEADERS": "{\"Authorization\":\"Basic dXNlcjpwYXNzd29yZA==\"}"
+}
+```
+
+The `Basic ...` value is `base64(user:password)`. Generate with `printf 'user:password' | base64` (don't include a trailing newline).
+
+### Authelia / oauth2-proxy / forward-auth
+
+These proxies typically inject `Remote-User` / `X-Forwarded-User` / `X-Forwarded-Email` after the user has already authenticated, but if you have a service-account flow that lets you skip the interactive auth, set those headers directly:
+
+```jsonc
+"env": {
+  "OVERLEAF_URL": "https://overleaf.corp.example",
+  "OVERLEAF_SESSION_COOKIE": "overleaf.sid=s%3A...",
+  "OVERLEAF_EXTRA_HEADERS": "{\"Remote-User\":\"agent@local\",\"X-Forwarded-User\":\"agent@local\"}"
+}
+```
+
+If your proxy expects a bearer token from a long-lived service account, send `Authorization: Bearer ...` instead. Run `overleaf-mcp diagnose` after configuring — a missing or wrong header surfaces as `OVERLEAF_AUTH_FAILED` on the REST step or `OT connectionRejected: invalid session` on the OT step.
+
+### Tailscale / VPN (no extra headers)
+
+If Overleaf is reachable only via a Tailscale node or a VPN, no headers are needed at the application layer — the network already authenticates. Just point `OVERLEAF_URL` at the internal hostname:
+
+```jsonc
+"env": {
+  "OVERLEAF_URL": "http://overleaf.tail-scale.ts.net",
+  "OVERLEAF_SESSION_COOKIE": "overleaf.sid=s%3A..."
+}
+```
+
+### Sanity-check: `overleaf-mcp diagnose`
+
+After wiring credentials, run from a shell:
+
+```bash
+overleaf-mcp diagnose
+```
+
+Output is a step-by-step report:
+
+```
+✓ config — URL https://overleaf.corp.example
+✓ REST handshake — cookie valid, CSRF scraped
+✓ reverse-proxy — CF detected, extraHeaders configured
+✓ project listing — 3 project(s) accessible
+✓ OT handshake — publicId P.abc...
+```
+
+A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `PROXY_AUTH_FAILED`, `PROJECT_ACCESS_DENIED`) so you know which layer to fix.
 
 ## Tools (v0.3)
 
