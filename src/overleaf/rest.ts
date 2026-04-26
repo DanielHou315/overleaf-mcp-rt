@@ -106,4 +106,33 @@ export class OverleafRest {
     const contentType = res.headers.get('content-type') ?? 'application/octet-stream'
     return { bytes, contentType }
   }
+
+  /**
+   * Create an empty text doc under `parentFolderId` with `name`.
+   * Returns the new doc's id. The caller can subsequently `write_doc`
+   * via OT to populate it.
+   *
+   * Workshop reference: src/api/base.ts addDoc.
+   */
+  async createDoc(
+    projectId: string,
+    parentFolderId: string,
+    name: string,
+  ): Promise<{ id: string }> {
+    const res = await this.http.postJson(`/project/${encodeURIComponent(projectId)}/doc`, {
+      name,
+      parent_folder_id: parentFolderId,
+    })
+    if (!res.ok) {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `createDoc returned ${res.status} for ${name}`,
+      )
+    }
+    const json = (await res.json()) as { _id?: string }
+    if (!json._id) {
+      throw new OverleafError('OVERLEAF_GENERIC', 'createDoc response missing _id')
+    }
+    return { id: json._id }
+  }
 }
