@@ -6,7 +6,7 @@ import type {
   JoinProjectResponse,
   ProjectEntity,
 } from './ot.types.js'
-import { OverleafError } from '../errors.js'
+import { OverleafError, OtVersionConflictError } from '../errors.js'
 import { computeOps, type OtOp } from './diff.js'
 
 /** Mirrors v0.1's TreeNode shape so MCP tool outputs stay stable. */
@@ -206,15 +206,15 @@ export class OtEngine {
    * `apply_patch` tool routes here.
    */
   async applyOps(docId: string, ops: OtOp[]): Promise<void> {
+    return this.applyOpsWithResync(docId, ops, /* attemptsLeft */ 1)
+  }
+
+  private async applyOpsWithResync(docId: string, ops: OtOp[], attemptsLeft: number): Promise<void> {
     let baseline = this.getBaseline(docId)
     if (!baseline) baseline = await this.joinDoc(docId)
     this.ensureOtUpdateAppliedListener()
 
-    const update = {
-      doc: docId,
-      op: ops,
-      v: baseline.version,
-    }
+    const update = { doc: docId, op: ops, v: baseline.version }
 
     // Wait for both the ack AND the otUpdateApplied echo for our publicId.
     const echoPromise = new Promise<void>((resolve) => {
@@ -223,7 +223,33 @@ export class OtEngine {
       arr.push(resolve)
     })
 
-    await this.socket.emitWithAck('applyOtUpdate', docId, update)
+    try {
+      await this.socket.emitWithAck('applyOtUpdate', docId, update)
+    } catch (err) {
+      // Cancel the pending echo waiter (the server won't echo on error).
+      this.cancelPendingEcho(docId)
+      if (isVersionMismatch(err) && attemptsLeft > 0) {
+        // Resync: drop baseline, re-joinDoc, recompute ops, retry.
+        this.clearBaseline(docId)
+        const fresh = await this.joinDoc(docId)
+        // Recompute ops against the new text. The original ops were authored
+        // against an older baseline, so we re-derive what the agent intended:
+        // apply old ops to the OLD baseline text to get the desired final
+        // text, then diff THAT against the new baseline.
+        const oldText = applyOpsLocal(baseline.text, ops)
+        const recomputedOps = computeOps(fresh.text, oldText)
+        if (recomputedOps.length === 0) return
+        return this.applyOpsWithResync(docId, recomputedOps, attemptsLeft - 1)
+      }
+      if (isVersionMismatch(err)) {
+        throw new OtVersionConflictError(
+          `Doc ${docId} kept conflicting after resync`,
+          { docId, baselineVersion: baseline.version },
+        )
+      }
+      throw err instanceof Error ? err : new OverleafError('OVERLEAF_GENERIC', String(err))
+    }
+
     await echoPromise
 
     // Compute the new text from the ops we just sent (avoids depending on
@@ -233,6 +259,12 @@ export class OtEngine {
       stillBaseline.text = applyOpsLocal(stillBaseline.text, ops)
       stillBaseline.version = baseline.version + 1
     }
+  }
+
+  private cancelPendingEcho(docId: string): void {
+    const arr = this.pendingEchoes.get(docId)
+    if (!arr || arr.length === 0) return
+    arr.shift() // resolve nothing — the awaiting promise will be GC'd by the throw path
   }
 
   // ---- internals ----
@@ -315,6 +347,14 @@ export class OtEngine {
  */
 function decodeLatin1Lines(lines: string[]): string {
   return lines.map((line) => Buffer.from(line, 'latin1').toString('utf-8')).join('\n')
+}
+
+function isVersionMismatch(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { code?: unknown; message?: unknown; name?: unknown }
+  if (typeof e.code === 'string' && /version|OutOfSync/i.test(e.code)) return true
+  if (typeof e.message === 'string' && /version|out.of.sync|conflict/i.test(e.message)) return true
+  return false
 }
 
 /**
