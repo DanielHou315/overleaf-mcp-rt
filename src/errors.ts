@@ -10,6 +10,14 @@ export type ErrorCode =
   | 'OT_DELETE_MISMATCH'
   | 'OT_VERSION_DRIFT'
 
+export interface ErrorEnvelope {
+  code: ErrorCode
+  message: string
+  context: Record<string, unknown>
+  retryable: boolean
+  hint?: string
+}
+
 export class OverleafError extends Error {
   readonly code: ErrorCode
   readonly context: Record<string, unknown>
@@ -21,7 +29,7 @@ export class OverleafError extends Error {
     this.context = context
   }
 
-  toEnvelope(): { code: ErrorCode; message: string; context: Record<string, unknown>; retryable: boolean; hint?: string } {
+  toEnvelope(): ErrorEnvelope {
     return {
       code: this.code,
       message: this.message,

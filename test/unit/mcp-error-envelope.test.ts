@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { OtDeleteMismatchError, AuthFailedError } from '../../src/errors.js'
+import { NetworkError, NotFoundError } from '../../src/errors.js'
 
 describe('OverleafError.toEnvelope', () => {
   it('returns code, message, context, retryable=false, and a hint for OT_DELETE_MISMATCH', () => {
@@ -15,5 +16,15 @@ describe('OverleafError.toEnvelope', () => {
     const env = new AuthFailedError('cookie expired').toEnvelope()
     expect(env.retryable).toBe(false)
     expect(env.hint).toMatch(/login/)
+  })
+
+  it('marks NetworkError as retryable', () => {
+    const env = new NetworkError('socket timeout').toEnvelope()
+    expect(env.retryable).toBe(true)
+  })
+
+  it('omits hint when no entry is registered for the code', () => {
+    const env = new NotFoundError('no such doc').toEnvelope()
+    expect(env.hint).toBeUndefined()
   })
 })
