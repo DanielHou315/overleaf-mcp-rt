@@ -1,5 +1,6 @@
 import type { ServerContext } from '../server.js'
 import { NotFoundError } from '../../errors.js'
+import { effectiveMime } from './mime.js'
 
 export interface MutationResult {
   ok: true
@@ -69,17 +70,18 @@ export async function handleUploadFile(
     parentPath: string
     name: string
     contentBase64: string
-    mimeType: string
+    mimeType?: string
   },
 ): Promise<MutationResult> {
   const parentFolderId = await resolveParentFolderId(ctx, input.projectId, input.parentPath)
   const bytes = new Uint8Array(Buffer.from(input.contentBase64, 'base64'))
+  const mime = effectiveMime(input.mimeType ?? '', input.name)
   const { id, kind } = await ctx.rest.uploadFile(
     input.projectId,
     parentFolderId,
     input.name,
     bytes,
-    input.mimeType,
+    mime,
   )
   const engine = await ctx.ot.get(input.projectId)
   const newPath = input.parentPath === '' ? input.name : `${input.parentPath}/${input.name}`

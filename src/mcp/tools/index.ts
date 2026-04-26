@@ -17,6 +17,7 @@ import {
 } from './tree.js'
 import { OverleafError } from '../../errors.js'
 import type { DownloadPdfResult } from './compile.js'
+import { effectiveMime } from './mime.js'
 
 const TOOL_DEFINITIONS = [
   {
@@ -154,7 +155,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'upload_file',
-    description: 'Upload a binary file (base64) under parentPath with the given mimeType. Overleaf may auto-promote text MIME types to docs; the response\'s kind reflects what the server stored.',
+    description: 'Upload a binary file (base64) under parentPath. mimeType is optional — when omitted, inferred from the path extension (png/jpg/pdf/etc); fallback is application/octet-stream. Overleaf may auto-promote text MIME types to docs.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -164,7 +165,7 @@ const TOOL_DEFINITIONS = [
         contentBase64: { type: 'string' },
         mimeType: { type: 'string' },
       },
-      required: ['projectId', 'parentPath', 'name', 'contentBase64', 'mimeType'],
+      required: ['projectId', 'parentPath', 'name', 'contentBase64'],
     },
   },
   {
@@ -278,7 +279,7 @@ export function registerAllTools(server: Server, ctx: ServerContext) {
                 parentPath: string
                 name: string
                 contentBase64: string
-                mimeType: string
+                mimeType?: string
               },
             ),
           )
@@ -322,36 +323,6 @@ function wrap(payload: unknown) {
   return {
     content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
   }
-}
-
-/** Map common file extensions to MIME types. Used when the server's
- *  Content-Type is missing or generic (Overleaf's filestore returns no
- *  Content-Type and sets `x-content-type-options: nosniff`, so the path
- *  extension is the only signal we have). */
-const EXT_TO_MIME: Record<string, string> = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  svg: 'image/svg+xml',
-  bmp: 'image/bmp',
-  ico: 'image/x-icon',
-  pdf: 'application/pdf',
-  txt: 'text/plain',
-  csv: 'text/csv',
-  json: 'application/json',
-  xml: 'application/xml',
-  md: 'text/markdown',
-  html: 'text/html',
-}
-
-function effectiveMime(serverMime: string, path: string): string {
-  // Trust an explicit non-generic MIME from the server.
-  if (serverMime && serverMime !== 'application/octet-stream') return serverMime
-  const ext = path.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]
-  if (ext && EXT_TO_MIME[ext]) return EXT_TO_MIME[ext]
-  return serverMime || 'application/octet-stream'
 }
 
 export function formatBinaryFile(
