@@ -5,6 +5,7 @@ import {
   ProxyAuthFailedError,
   ProjectAccessDeniedError,
   NetworkError,
+  OtVersionConflictError,
 } from '../../src/errors.js'
 
 describe('errors', () => {
@@ -38,5 +39,12 @@ describe('errors', () => {
     const e = new NetworkError('cannot connect', cause)
     expect(e.code).toBe('NETWORK_ERROR')
     expect(e.cause).toBe(cause)
+  })
+
+  it('OtVersionConflictError carries a stable code and context', () => {
+    const e = new OtVersionConflictError('doc fell behind', { docId: 'd1', version: 5 })
+    expect(e.code).toBe('OT_VERSION_CONFLICT')
+    expect(e.context).toEqual({ docId: 'd1', version: 5 })
+    expect(e).toBeInstanceOf(OverleafError)
   })
 })
