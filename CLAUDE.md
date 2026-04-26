@@ -16,8 +16,8 @@ When making decisions, defer to the spec; if the spec is silent, raise it for di
 - v0.1 (read-only via REST + project-zip cache) — superseded by v0.2
 - v0.2 (OT-live reads + writes via ported Overleaf-Workshop Socket.IO client) — superseded by v0.3
 - v0.3 (REST tree mutations: create_doc, create_folder, upload_file, rename, move, delete_entity) — superseded by v0.4
-- v0.4 (polish: error mapping, per-doc write serialization, reconnect jitter, diagnose subcommand, pdfDownloadDomain, README auth examples) — shipped
-- v1.0 (npm publish under AGPL-3.0 with Workshop attribution) — not yet started
+- v0.4 (polish: error mapping, per-doc write serialization, reconnect jitter, diagnose subcommand, pdfDownloadDomain, README auth examples) — superseded by v1.0
+- v1.0 (npm publish under AGPL-3.0 with Workshop attribution) — shipped
 - Implementation lives at the repo root (`src/`, `test/`, `scripts/`, `package.json`, …)
 
 ## Hard constraints

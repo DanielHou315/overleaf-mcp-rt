@@ -2,17 +2,24 @@
 
 A [Model Context Protocol](https://modelcontextprotocol.io/) server for **Overleaf Community Edition** that lets AI coding agents (Claude Code, Claude Desktop, Codex via MCP, Cursor, …) read, navigate, and compile LaTeX projects in your self-hosted Overleaf instance — **without** git-bridge or Server Pro.
 
-**v0.4 (current):** read + write + full tree CRUD via Overleaf's REST + native OT pipeline. Edits flow as live operations from a connected collaborator — no "file changed externally" toast.
+**v1.0 (current):** read + write + full tree CRUD via Overleaf's REST + native OT pipeline. Edits flow as live operations from a connected collaborator — no "file changed externally" toast.
 
-Design docs (source of truth) live in `docs/superpowers/`:
-- Spec: `docs/superpowers/specs/2026-04-25-overleaf-mcp-design.md`
-- v0.1 plan: `docs/superpowers/plans/2026-04-25-overleaf-mcp-v0.1-read-only.md`
+Design docs (source of truth) live in the [GitHub repo](https://github.com/DanielHou315/overleaf-ot-mcp/tree/main/docs/superpowers).
 
 ## Install
 
+Two ways to use it:
+
 ```bash
+# A. Zero-install via npx (recommended for MCP clients)
 npx overleaf-mcp@latest --help
+
+# B. Global install for shell use
+npm install -g overleaf-mcp
+overleaf-mcp --help
 ```
+
+Requires Node.js ≥ 20.
 
 ## Quick start
 
@@ -20,7 +27,10 @@ npx overleaf-mcp@latest --help
 # 1. Get a session cookie (paste from devtools or use --email/--password)
 npx overleaf-mcp login --url https://overleaf.example.com
 
-# 2. Smoke test
+# 2. Smoke test connectivity, auth, and OT handshake
+npx overleaf-mcp diagnose
+
+# 3. List projects
 npx overleaf-mcp ls
 ```
 
@@ -124,7 +134,7 @@ Output is a step-by-step report:
 
 A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `PROXY_AUTH_FAILED`, `PROJECT_ACCESS_DENIED`) so you know which layer to fix.
 
-## Tools (v0.4)
+## Tools (v1.0)
 
 | Tool | Purpose |
 |---|---|

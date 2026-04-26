@@ -282,9 +282,9 @@ overleaf-mcp/
 - Reconnect / backoff hardening.
 - README config examples.
 
-### v1.0 — release
+### v1.0 — release — shipped
 
-Publish to npm under AGPL-3.0 with attribution to Overleaf-Workshop.
+Published to npm under AGPL-3.0 with attribution to Overleaf-Workshop. Install via `npm install -g overleaf-mcp` or wire into MCP clients with `npx -y overleaf-mcp@latest`.
 
 ### Deferred
 

@@ -14,7 +14,7 @@ import { OverleafSocket } from './overleaf/socket.js'
 import { OtEngine } from './overleaf/ot.js'
 
 const HELP = `
-overleaf-mcp — MCP server for Overleaf Community Edition (v0.4)
+overleaf-mcp — MCP server for Overleaf Community Edition (v1.0)
 
 Usage:
   overleaf-mcp                Run as MCP stdio server (default).
