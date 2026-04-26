@@ -98,4 +98,16 @@ describe('loadConfig', () => {
       }),
     ).toThrow(InvalidConfigError)
   })
+
+  it('throws InvalidConfigError when URL has no http(s) scheme', () => {
+    expect(() =>
+      loadConfig({
+        env: {
+          OVERLEAF_URL: '192.168.1.10:8080',
+          OVERLEAF_SESSION_COOKIE: 'c',
+        },
+        credentialsPath: join(tmp, 'nope.json'),
+      }),
+    ).toThrow(/must start with http:\/\/ or https:\/\//)
+  })
 })

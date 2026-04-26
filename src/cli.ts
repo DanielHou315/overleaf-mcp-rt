@@ -7,7 +7,7 @@ import { stdin as input, stdout as output, stderr } from 'node:process'
 import { loadConfig } from './config.js'
 import { validateCookie, passportLogin } from './overleaf/auth.js'
 import { buildContext, runMcpServer } from './mcp/server.js'
-import { OverleafError } from './errors.js'
+import { InvalidConfigError, OverleafError } from './errors.js'
 
 const HELP = `
 overleaf-mcp — MCP server for Overleaf Community Edition (v0.1)
@@ -96,6 +96,11 @@ async function runLogin(argv: string[]) {
   const rl = createInterface({ input, output })
 
   const url = args.url ?? (await rl.question('Overleaf URL: ')).trim()
+  if (!/^https?:\/\//i.test(url)) {
+    throw new InvalidConfigError(
+      `URL must start with http:// or https:// (got: ${url})`,
+    )
+  }
   const extraHeaders: Record<string, string> = {}
   for (const h of args.headers) {
     const eq = h.indexOf('=')

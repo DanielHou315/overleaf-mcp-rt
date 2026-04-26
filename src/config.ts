@@ -46,6 +46,11 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
       'OVERLEAF_URL is required (set the env var or run `overleaf-mcp login`).',
     )
   }
+  if (!/^https?:\/\//i.test(url)) {
+    throw new InvalidConfigError(
+      `OVERLEAF_URL must start with http:// or https:// (got: ${url})`,
+    )
+  }
   if (!sessionCookie) {
     throw new InvalidConfigError(
       'OVERLEAF_SESSION_COOKIE is required (paste from devtools or run `overleaf-mcp login`).',
