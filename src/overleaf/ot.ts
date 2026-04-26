@@ -39,6 +39,17 @@ export interface OtEngineOptions {
   reconnectInitialDelayMs?: number
   /** Max attempts before giving up (default 10). */
   reconnectMaxAttempts?: number
+  /**
+   * Called when the engine has exhausted reconnectMaxAttempts and given up.
+   * The OtEngineRegistry uses this to evict the dead engine from its cache so
+   * the next consumer gets a fresh one.
+   */
+  onReconnectFailed?: () => void
+  /**
+   * Test seam: override setTimeout for reconnect scheduling. Defaults to the
+   * global setTimeout.
+   */
+  schedule?: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>
 }
 
 /**
@@ -56,6 +67,8 @@ export class OtEngine {
   private readonly socketFactory: (() => SocketLike) | null
   private readonly reconnectInitialDelayMs: number
   private readonly reconnectMaxAttempts: number
+  private readonly onReconnectFailed: (() => void) | null
+  private readonly schedule: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>
   private reconnectAttempt = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private _publicId: string | null = null
@@ -77,6 +90,8 @@ export class OtEngine {
     this.socketFactory = opts.socketFactory ?? null
     this.reconnectInitialDelayMs = opts.reconnectInitialDelayMs ?? 500
     this.reconnectMaxAttempts = opts.reconnectMaxAttempts ?? 10
+    this.onReconnectFailed = opts.onReconnectFailed ?? null
+    this.schedule = opts.schedule ?? setTimeout
   }
 
   get publicId(): string | null { return this._publicId }
@@ -433,6 +448,7 @@ export class OtEngine {
     if (this.reconnectTimer) return // already scheduled
     if (this.reconnectAttempt >= this.reconnectMaxAttempts) {
       this._isConnected = false
+      if (this.onReconnectFailed) this.onReconnectFailed()
       return
     }
 
@@ -448,12 +464,14 @@ export class OtEngine {
     this.installedHandlers = []
     try { this.currentSocket.disconnect() } catch { /* old socket may already be torn down */ }
 
-    const delay = Math.min(
+    const baseDelay = Math.min(
       this.reconnectInitialDelayMs * 2 ** this.reconnectAttempt,
       30_000,
     )
+    // Jitter ∈ [0.5, 1.5) × base. Spreads coordinated client herds.
+    const delay = Math.round(baseDelay * (0.5 + Math.random()))
     this.reconnectAttempt += 1
-    this.reconnectTimer = setTimeout(() => {
+    this.reconnectTimer = this.schedule(() => {
       this.reconnectTimer = null
       this.currentSocket = this.socketFactory!()
       void this.connect().then(
@@ -546,13 +564,20 @@ export class OtEngineRegistry {
 
     const promise = (async () => {
       const inputs = this.factory(projectId)
-      const engine = new OtEngine({ projectId, ...inputs })
+      const engine = new OtEngine({
+        projectId,
+        ...inputs,
+        onReconnectFailed: () => {
+          // Evict the dead engine so the next get() rebuilds it.
+          this.engines.delete(projectId)
+        },
+      })
       try {
         await engine.connect()
         this.engines.set(projectId, engine)
         return engine
       } catch (err) {
-        try { engine.disconnect() } catch { /* socket may already be torn down */ }
+        try { engine.disconnect() } catch { /* may already be torn down */ }
         throw err
       } finally {
         this.inflight.delete(projectId)
