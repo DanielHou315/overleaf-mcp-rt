@@ -10,7 +10,7 @@ import { buildContext, runMcpServer } from './mcp/server.js'
 import { InvalidConfigError, OverleafError } from './errors.js'
 
 const HELP = `
-overleaf-mcp — MCP server for Overleaf Community Edition (v0.1)
+overleaf-mcp — MCP server for Overleaf Community Edition (v0.2)
 
 Usage:
   overleaf-mcp                Run as MCP stdio server (default).

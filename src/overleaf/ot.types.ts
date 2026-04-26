@@ -1,3 +1,6 @@
+// Wire-protocol types ported from Overleaf-Workshop
+// (https://github.com/iamhyc/Overleaf-Workshop), specifically
+// the schemas in src/api/socketio.ts. Used under AGPL-3.0-or-later.
 import type { OtOp } from './diff.js'
 
 /**

@@ -12,7 +12,7 @@ const PASSWORD = process.env.TEST_OVERLEAF_PASSWORD ?? 'password'
 const skip = process.env.RUN_INTEGRATION !== '1'
 
 describe.skipIf(skip)('overleaf-mcp against live CE', () => {
-  it('lists, downloads zip(?), compiles via REST', async () => {
+  it('lists projects + compiles via REST', async () => {
     const id = await passportLogin({ url: URL, email: EMAIL, password: PASSWORD, extraHeaders: {} })
     const http = new OverleafHttp({ url: URL, sessionCookie: id.sessionCookie, csrfToken: id.csrfToken, extraHeaders: {} })
     const rest = new OverleafRest(http)

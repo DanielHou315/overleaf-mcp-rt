@@ -1,3 +1,6 @@
+// Socket.IO connection wrapper inspired by Overleaf-Workshop
+// (https://github.com/iamhyc/Overleaf-Workshop), specifically
+// the v0.9 fork wiring in src/api/socketio.ts. Used under AGPL-3.0-or-later.
 import io from 'socket.io-client'
 import { NetworkError } from '../errors.js'
 

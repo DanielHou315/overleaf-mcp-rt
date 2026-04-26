@@ -51,7 +51,7 @@ npx overleaf-mcp ls
 }
 ```
 
-The headers in `OVERLEAF_EXTRA_HEADERS` are merged into both REST requests **and** the WebSocket handshake (when OT mode lands in v0.2).
+The headers in `OVERLEAF_EXTRA_HEADERS` are merged into both REST requests **and** the WebSocket handshake.
 
 ## Tools (v0.2)
 
