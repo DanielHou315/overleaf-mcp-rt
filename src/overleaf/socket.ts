@@ -1,6 +1,14 @@
 // Socket.IO connection wrapper inspired by Overleaf-Workshop
 // (https://github.com/iamhyc/Overleaf-Workshop), specifically
 // the v0.9 fork wiring in src/api/socketio.ts. Used under AGPL-3.0-or-later.
+//
+// The github:overleaf/socket.io-client#0.9.17-overleaf-5 fork does NOT thread
+// `extraHeaders` from the connect-options into either the XHR handshake or
+// the WebSocket upgrade. Without that, our session cookie never reaches the
+// realtime service and connections are rejected with `invalid session`. We
+// apply Overleaf-Workshop's patch (patches/socket.io-client+0.9.17-overleaf-5.patch,
+// run via patch-package as a postinstall step) which adds extraHeaders
+// support to both paths. This file just consumes the patched API.
 import io from 'socket.io-client'
 import { NetworkError } from '../errors.js'
 

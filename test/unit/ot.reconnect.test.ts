@@ -42,37 +42,14 @@ describe('OtEngine reconnect', () => {
     expect(engine.isConnected).toBe(true)
   })
 
-  it('rejects in-flight writes with NetworkError when reconnect fires mid-write', async () => {
-    const sockets: FakeSocket[] = []
-    const factory = vi.fn(() => {
-      const s = new FakeSocket()
-      sockets.push(s)
-      return s
-    })
-    const engine = new OtEngine({
-      socket: factory(),
-      projectId: 'p1',
-      socketFactory: factory,
-      reconnectInitialDelayMs: 1,
-    })
-    const cp = engine.connect()
-    sockets[0]!.simulate('connectionAccepted', null, 'pub')
-    sockets[0]!.simulate('joinProjectResponse', join())
-    await cp
-
-    sockets[0]!.respondToEmit('joinDoc', () => [null, ['hello'], 0, []])
-    await engine.joinDoc('d1')
-
-    // Start a write but don't ack/echo yet — meanwhile reconnect fires.
-    sockets[0]!.respondToEmit('applyOtUpdate', () => [null]) // ack ok, no echo
-    const writePromise = engine.writeDoc('d1', 'hello world')
-
-    // Trigger reconnect before the echo arrives
-    sockets[0]!.simulate('forceDisconnect', 'kick')
-
-    // The write should reject with NetworkError
-    await expect(writePromise).rejects.toMatchObject({ code: 'NETWORK_ERROR' })
-  })
+  // Note: an earlier draft of v0.2 awaited an `otUpdateApplied` echo for own
+  // writes and tracked pending awaiters in a map that needed cleanup on
+  // reconnect. We dropped that path because Overleaf CE omits `meta.source`
+  // for own-write echoes, which made the wait hang indefinitely. The
+  // applyOtUpdate ack alone is the commit confirmation now (matching
+  // Overleaf-Workshop's applyOtUpdate). Reconnect-during-write rejection
+  // therefore relies on the v0.9 fork failing emitWithAck on disconnect,
+  // which is the underlying ws library's behavior.
 
   it('drops baselines on reconnect (clients must re-joinDoc)', async () => {
     const sockets: FakeSocket[] = []

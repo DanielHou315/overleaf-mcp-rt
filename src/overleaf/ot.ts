@@ -9,7 +9,7 @@ import type {
   JoinProjectResponse,
   ProjectEntity,
 } from './ot.types.js'
-import { NetworkError, OverleafError, OtVersionConflictError } from '../errors.js'
+import { OverleafError, OtVersionConflictError } from '../errors.js'
 import { computeOps, type OtOp } from './diff.js'
 
 /** Mirrors v0.1's TreeNode shape so MCP tool outputs stay stable. */
@@ -68,9 +68,6 @@ export class OtEngine {
   private installedHandlers: Array<{ event: string; handler: (...args: unknown[]) => void }> = []
   private baselines = new Map<string, DocBaseline>()
   private inflightJoinDoc = new Map<string, Promise<DocBaseline>>()
-  /** Pending writes awaiting their otUpdateApplied echo. */
-  private pendingEchoes = new Map<string, Array<{ resolve: () => void; reject: (err: unknown) => void }>>()
-  private otUpdateAppliedHandlerInstalled = false
 
   constructor(opts: OtEngineOptions) {
     this.currentSocket = opts.socket
@@ -239,22 +236,18 @@ export class OtEngine {
   private async applyOpsWithResync(docId: string, ops: OtOp[], attemptsLeft: number): Promise<void> {
     let baseline = this.getBaseline(docId)
     if (!baseline) baseline = await this.joinDoc(docId)
-    this.ensureOtUpdateAppliedListener()
 
     const update = { doc: docId, op: ops, v: baseline.version }
 
-    // Wait for both the ack AND the otUpdateApplied echo for our publicId.
-    const echoPromise = new Promise<void>((resolve, reject) => {
-      let arr = this.pendingEchoes.get(docId)
-      if (!arr) this.pendingEchoes.set(docId, arr = [])
-      arr.push({ resolve, reject })
-    })
-
     try {
+      // The applyOtUpdate ack IS the commit confirmation — the server only
+      // acks after the doc-updater service applies the op. We do NOT wait for
+      // an `otUpdateApplied` echo: the server omits `meta` for own-writes
+      // (sends just `{doc, v}`), so filtering by `meta.source === publicId`
+      // would hang forever. Workshop's applyOtUpdate likewise only awaits
+      // the ack (src/api/socketio.ts:applyOtUpdate).
       await this.currentSocket.emitWithAck('applyOtUpdate', docId, update)
     } catch (err) {
-      // Cancel the pending echo waiter (the server won't echo on error).
-      this.cancelPendingEcho(docId)
       if (isVersionMismatch(err) && attemptsLeft > 0) {
         // Resync: drop baseline, re-joinDoc, recompute ops, retry.
         this.clearBaseline(docId)
@@ -277,47 +270,12 @@ export class OtEngine {
       throw err instanceof Error ? err : new OverleafError('OVERLEAF_GENERIC', String(err))
     }
 
-    await echoPromise
-
-    // Compute the new text from the ops we just sent (avoids depending on
-    // the echo carrying it back).
+    // Bump baseline locally — server has applied the op.
     const stillBaseline = this.getBaseline(docId)
     if (stillBaseline) {
       stillBaseline.text = applyOpsLocal(stillBaseline.text, ops)
       stillBaseline.version = baseline.version + 1
     }
-  }
-
-  private cancelPendingEcho(docId: string): void {
-    const arr = this.pendingEchoes.get(docId)
-    if (!arr || arr.length === 0) return
-    const { resolve } = arr.shift()!
-    resolve()
-  }
-
-  private rejectAllPendingEchoes(err: unknown): void {
-    for (const arr of this.pendingEchoes.values()) {
-      for (const { reject } of arr) reject(err)
-    }
-    this.pendingEchoes.clear()
-  }
-
-  // ---- internals ----
-
-  /** Install the otUpdateApplied listener once. Filters by meta.source === publicId. */
-  private ensureOtUpdateAppliedListener(): void {
-    if (this.otUpdateAppliedHandlerInstalled) return
-    this.otUpdateAppliedHandlerInstalled = true
-    this.installListener('otUpdateApplied', (raw: unknown) => {
-      const update = raw as { doc?: string; meta?: { source?: string } }
-      if (!update.doc) return
-      // Only echoes from our own client mark a write as complete.
-      if (update.meta?.source !== this._publicId) return
-      const arr = this.pendingEchoes.get(update.doc)
-      if (!arr || arr.length === 0) return
-      const { resolve } = arr.shift()!
-      resolve()
-    })
   }
 
   private installTreeEventHandlers(): void {
@@ -408,11 +366,12 @@ export class OtEngine {
       return
     }
 
-    // Drop old state
+    // Drop old state. In-flight writes will see their underlying ws fail
+    // when the socket closes; emitWithAck rejects, applyOpsWithResync
+    // surfaces the error to the caller as NetworkError.
     this._isConnected = false
     this.baselines.clear()
     this.inflightJoinDoc.clear()
-    this.rejectAllPendingEchoes(new NetworkError('OT engine reconnecting; retry the write'))
     for (const { event, handler } of this.installedHandlers) {
       this.currentSocket.off(event, handler)
     }
@@ -427,7 +386,6 @@ export class OtEngine {
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
       this.currentSocket = this.socketFactory!()
-      this.otUpdateAppliedHandlerInstalled = false
       void this.connect().then(
         () => { this.reconnectAttempt = 0 },
         () => this.scheduleReconnect(),
