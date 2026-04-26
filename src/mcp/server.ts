@@ -6,11 +6,14 @@ import { ProjectCache } from '../overleaf/cache.js'
 import { parseProjectZip } from '../overleaf/zip.js'
 import { ProjectTree } from '../overleaf/tree.js'
 import { registerAllTools } from './tools/index.js'
+import { OverleafSocket } from '../overleaf/socket.js'
+import { OtEngineRegistry, type OtEngineFactory } from '../overleaf/ot.js'
 
 export interface ServerContext {
   http: OverleafHttp
   rest: OverleafRest
-  cache: ProjectCache
+  cache: ProjectCache  // v0.1 — retire in Task 19
+  ot: OtEngineRegistry // v0.2
 }
 
 export interface ContextOptions {
@@ -38,7 +41,20 @@ export function buildContext(opts: ContextOptions): ServerContext {
     },
     { ttlMs: opts.cacheTtlMs ?? 60_000 },
   )
-  return { http, rest, cache }
+  const otFactory: OtEngineFactory = (projectId) => {
+    const makeSocket = () => new OverleafSocket({
+      url: opts.url,
+      projectId,
+      sessionCookie: opts.sessionCookie,
+      extraHeaders: opts.extraHeaders,
+    })
+    return {
+      socket: makeSocket(),
+      socketFactory: makeSocket,
+    }
+  }
+  const ot = new OtEngineRegistry(otFactory)
+  return { http, rest, cache, ot }
 }
 
 export async function runMcpServer(ctx: ServerContext) {
