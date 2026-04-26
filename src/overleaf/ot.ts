@@ -478,6 +478,52 @@ export class OtEngine {
 }
 
 /**
+ * Function the registry calls to mint a new socket (and optionally a
+ * socketFactory for reconnect) for a given projectId. Returns the inputs
+ * `OtEngine` needs at construction time minus the projectId.
+ */
+export type OtEngineFactory = (projectId: string) => {
+  socket: SocketLike
+  socketFactory?: () => SocketLike
+  reconnectInitialDelayMs?: number
+  reconnectMaxAttempts?: number
+}
+
+export class OtEngineRegistry {
+  private engines = new Map<string, OtEngine>()
+  private inflight = new Map<string, Promise<OtEngine>>()
+
+  constructor(private readonly factory: OtEngineFactory) {}
+
+  async get(projectId: string): Promise<OtEngine> {
+    const cached = this.engines.get(projectId)
+    if (cached) return cached
+    const inflight = this.inflight.get(projectId)
+    if (inflight) return inflight
+
+    const promise = (async () => {
+      const inputs = this.factory(projectId)
+      const engine = new OtEngine({ projectId, ...inputs })
+      try {
+        await engine.connect()
+        this.engines.set(projectId, engine)
+        return engine
+      } finally {
+        this.inflight.delete(projectId)
+      }
+    })()
+    this.inflight.set(projectId, promise)
+    return promise
+  }
+
+  /** Disconnect and drop every engine. */
+  async closeAll(): Promise<void> {
+    for (const engine of this.engines.values()) engine.disconnect()
+    this.engines.clear()
+  }
+}
+
+/**
  * Overleaf packs UTF-8 doc bytes through latin1 over the Socket.IO transport.
  * Each line comes back as a latin1 string whose char codes are the original
  * UTF-8 byte values; reconstruct UTF-8 by treating the chars as latin1 bytes.
