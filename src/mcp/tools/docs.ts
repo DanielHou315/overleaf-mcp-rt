@@ -3,6 +3,15 @@ import { NotFoundError, OverleafError } from '../../errors.js'
 import type { OtOp } from '../../overleaf/diff.js'
 import type { DownloadedBytes } from '../../overleaf/rest.js'
 
+export interface WriteSummary {
+  versionBefore: number
+  versionAfter: number
+  charsBefore: number
+  charsAfter: number
+  charsDelta: number
+  opsApplied: number
+}
+
 export async function handleReadDoc(
   ctx: ServerContext,
   input: { projectId: string; path: string },
@@ -31,20 +40,34 @@ export async function handleReadFile(
 export async function handleWriteDoc(
   ctx: ServerContext,
   input: { projectId: string; path: string; content: string },
-): Promise<{ ok: true }> {
+): Promise<{ ok: true; summary: WriteSummary }> {
   const engine = await ctx.ot.get(input.projectId)
   const docId = engine.pathToDocId(input.path)
   if (docId === null) {
     throw new NotFoundError(`No doc at ${input.path} in project ${input.projectId}`)
   }
+  const before = await engine.joinDoc(docId)
+  const charsBefore = before.text.length
+  const versionBefore = before.version
   await engine.writeDoc(docId, input.content)
-  return { ok: true }
+  const after = engine.getBaseline?.(docId) ?? before
+  return {
+    ok: true,
+    summary: {
+      versionBefore,
+      versionAfter: after.version,
+      charsBefore,
+      charsAfter: input.content.length,
+      charsDelta: input.content.length - charsBefore,
+      opsApplied: 1,
+    },
+  }
 }
 
 export async function handleApplyPatch(
   ctx: ServerContext,
   input: { projectId: string; path: string; ops: OtOp[] },
-): Promise<{ ok: true }> {
+): Promise<{ ok: true; summary: WriteSummary }> {
   // Validate op shape — each op must have exactly one of i or d.
   for (const op of input.ops) {
     if (typeof op.p !== 'number' || op.p < 0) {
@@ -62,6 +85,21 @@ export async function handleApplyPatch(
   if (docId === null) {
     throw new NotFoundError(`No doc at ${input.path} in project ${input.projectId}`)
   }
+  const before = await engine.joinDoc(docId)
+  const charsBefore = before.text.length
+  const versionBefore = before.version
+
   await engine.applyOps(docId, input.ops)
-  return { ok: true }
+  const after = engine.getBaseline?.(docId) ?? before
+  return {
+    ok: true,
+    summary: {
+      versionBefore,
+      versionAfter: after.version,
+      charsBefore,
+      charsAfter: after.text.length,
+      charsDelta: after.text.length - charsBefore,
+      opsApplied: input.ops.length,
+    },
+  }
 }

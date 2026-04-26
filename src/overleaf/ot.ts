@@ -267,8 +267,8 @@ export class OtEngine {
     return this.baselines.get(docId)?.text ?? null
   }
 
-  /** For internal use by Tasks 8/9 — read or fetch the baseline. */
-  protected getBaseline(docId: string): DocBaseline | undefined {
+  /** Read the cached baseline ({text, version}) for a doc, if joined. */
+  getBaseline(docId: string): DocBaseline | undefined {
     return this.baselines.get(docId)
   }
 
