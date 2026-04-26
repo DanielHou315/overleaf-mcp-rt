@@ -65,12 +65,13 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'read_file',
-    description: 'Read a binary file by path within a project. Returns native MCP image content for image MIMEs, text content for text MIMEs, resource for PDFs, and a {contentBase64,mimeType} envelope for other binary types.',
+    description: 'Read a binary file by path within a project. Default (as=auto): returns native MCP image content for image MIMEs, text content for text MIMEs, resource for PDFs, and a {contentBase64,mimeType} envelope for other binary types. Pass as="base64" to force the {contentBase64,mimeType} envelope for all types — useful when you need programmatic access to the bytes (e.g. to copy a binary between paths via upload_file).',
     inputSchema: {
       type: 'object',
       properties: {
         projectId: { type: 'string' },
         path: { type: 'string' },
+        as: { type: 'string', enum: ['auto', 'base64'] },
       },
       required: ['projectId', 'path'],
     },
@@ -248,9 +249,9 @@ export function registerAllTools(server: Server, ctx: ServerContext) {
             ),
           )
         case 'read_file': {
-          const args2 = args as { projectId: string; path: string }
+          const args2 = args as { projectId: string; path: string; as?: 'auto' | 'base64' }
           const result = await handleReadFile(ctx, args2)
-          return formatBinaryFile(result, args2.projectId, args2.path)
+          return formatBinaryFile(result, args2.projectId, args2.path, args2.as ?? 'auto')
         }
         case 'write_doc':
           return wrap(
@@ -353,9 +354,13 @@ export function formatBinaryFile(
   result: { bytes: Buffer; contentType: string },
   projectId: string,
   path: string,
+  as: 'auto' | 'base64' = 'auto',
 ): { content: Array<unknown> } {
   const base64 = result.bytes.toString('base64')
   const ct = effectiveMime(result.contentType, path)
+  if (as === 'base64') {
+    return wrap({ contentBase64: base64, mimeType: ct })
+  }
   if (ct.startsWith('image/')) {
     return { content: [{ type: 'image', data: base64, mimeType: ct }] }
   }
