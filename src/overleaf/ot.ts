@@ -30,6 +30,12 @@ interface PathEntry {
 export interface OtEngineOptions {
   socket: SocketLike
   projectId: string
+  /** Called on reconnect to obtain a fresh socket. If omitted, reconnect is disabled. */
+  socketFactory?: () => SocketLike
+  /** Initial backoff delay in ms (default 500). Doubles each attempt up to 30s. */
+  reconnectInitialDelayMs?: number
+  /** Max attempts before giving up (default 10). */
+  reconnectMaxAttempts?: number
 }
 
 /**
@@ -43,7 +49,12 @@ export interface OtEngineOptions {
  */
 export class OtEngine {
   readonly projectId: string
-  private readonly socket: SocketLike
+  private currentSocket: SocketLike
+  private readonly socketFactory: (() => SocketLike) | null
+  private readonly reconnectInitialDelayMs: number
+  private readonly reconnectMaxAttempts: number
+  private reconnectAttempt = 0
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private _publicId: string | null = null
   private _isConnected = false
   private project: ProjectEntity | null = null
@@ -59,8 +70,11 @@ export class OtEngine {
   private otUpdateAppliedHandlerInstalled = false
 
   constructor(opts: OtEngineOptions) {
-    this.socket = opts.socket
+    this.currentSocket = opts.socket
     this.projectId = opts.projectId
+    this.socketFactory = opts.socketFactory ?? null
+    this.reconnectInitialDelayMs = opts.reconnectInitialDelayMs ?? 500
+    this.reconnectMaxAttempts = opts.reconnectMaxAttempts ?? 10
   }
 
   get publicId(): string | null { return this._publicId }
@@ -108,12 +122,17 @@ export class OtEngine {
       this.installListener('joinProjectResponse', onJoinResponse as (...args: unknown[]) => void)
       this.installListener('connectionRejected', onConnRejected as (...args: unknown[]) => void)
 
+      const onForceDisconnect = (..._args: unknown[]): void => {
+        this.scheduleReconnect()
+      }
+      this.installListener('forceDisconnect', onForceDisconnect)
+
       // v2 mode is server-driven (the URL's projectId query causes CE to push
       // joinProjectResponse autonomously), but Workshop emits defensively in
       // case the server is in v1 mode or otherwise needs the explicit prod.
       // Belt-and-suspenders — if joinProjectResponse already arrived above,
       // the emit is harmless.
-      this.socket.emit('joinProject', { project_id: this.projectId })
+      this.currentSocket.emit('joinProject', { project_id: this.projectId })
     })
   }
 
@@ -151,7 +170,7 @@ export class OtEngine {
     const inflight = this.inflightJoinDoc.get(docId)
     if (inflight) return inflight
 
-    const promise = this.socket
+    const promise = this.currentSocket
       .emitWithAck('joinDoc', docId, { encodeRanges: true })
       .then((data) => {
         const [lines, version] = data as [string[], number, ...unknown[]]
@@ -225,7 +244,7 @@ export class OtEngine {
     })
 
     try {
-      await this.socket.emitWithAck('applyOtUpdate', docId, update)
+      await this.currentSocket.emitWithAck('applyOtUpdate', docId, update)
     } catch (err) {
       // Cancel the pending echo waiter (the server won't echo on error).
       this.cancelPendingEcho(docId)
@@ -366,20 +385,59 @@ export class OtEngine {
     return folder.folders as unknown as Array<{ _id: string; name: string }>
   }
 
+  private scheduleReconnect(): void {
+    if (!this.socketFactory) return
+    if (this.reconnectTimer) return // already scheduled
+    if (this.reconnectAttempt >= this.reconnectMaxAttempts) {
+      this._isConnected = false
+      return
+    }
+
+    // Drop old state
+    this._isConnected = false
+    this.baselines.clear()
+    this.inflightJoinDoc.clear()
+    this.pendingEchoes.clear()
+    for (const { event, handler } of this.installedHandlers) {
+      this.currentSocket.off(event, handler)
+    }
+    this.installedHandlers = []
+    try { this.currentSocket.disconnect() } catch { /* old socket may already be torn down */ }
+
+    const delay = Math.min(
+      this.reconnectInitialDelayMs * 2 ** this.reconnectAttempt,
+      30_000,
+    )
+    this.reconnectAttempt += 1
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      this.currentSocket = this.socketFactory!()
+      this.otUpdateAppliedHandlerInstalled = false
+      void this.connect().then(
+        () => { this.reconnectAttempt = 0 },
+        () => this.scheduleReconnect(),
+      )
+    }, delay)
+  }
+
   /** Disconnect socket, flush handlers. */
   disconnect(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
     for (const { event, handler } of this.installedHandlers) {
-      this.socket.off(event, handler)
+      this.currentSocket.off(event, handler)
     }
     this.installedHandlers = []
     this._isConnected = false
-    this.socket.disconnect()
+    this.currentSocket.disconnect()
   }
 
   // ---- internals (also called by later tasks) ----
 
   protected installListener(event: string, handler: (...args: unknown[]) => void): void {
-    this.socket.on(event, handler)
+    this.currentSocket.on(event, handler)
     this.installedHandlers.push({ event, handler })
   }
 
