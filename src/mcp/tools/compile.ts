@@ -1,5 +1,6 @@
 import type { ServerContext } from '../server.js'
 import { OverleafError } from '../../errors.js'
+import type { DownloadedBytes } from '../../overleaf/rest.js'
 
 interface CompileResult {
   status: string
@@ -40,14 +41,18 @@ export async function handleReadCompileLog(
   if (!result.logUrl) {
     throw new OverleafError('NOT_FOUND', `No log produced for project ${input.projectId}`)
   }
-  const buf = await ctx.rest.downloadOutputFile(result.logUrl)
-  return { log: buf.toString('utf-8') }
+  const { bytes } = await ctx.rest.downloadOutputFile(result.logUrl)
+  return { log: bytes.toString('utf-8') }
+}
+
+export interface DownloadPdfResult extends DownloadedBytes {
+  status: string
 }
 
 export async function handleDownloadPdf(
   ctx: ServerContext,
   input: { projectId: string },
-): Promise<{ pdfBase64: string }> {
+): Promise<DownloadPdfResult> {
   const result = await compileAndCache(ctx, input.projectId)
   if (!result.pdfUrl) {
     throw new OverleafError(
@@ -55,6 +60,6 @@ export async function handleDownloadPdf(
       `No PDF produced for project ${input.projectId} (compile status: ${result.status})`,
     )
   }
-  const buf = await ctx.rest.downloadOutputFile(result.pdfUrl)
-  return { pdfBase64: buf.toString('base64') }
+  const { bytes, contentType } = await ctx.rest.downloadOutputFile(result.pdfUrl)
+  return { bytes, contentType, status: result.status }
 }

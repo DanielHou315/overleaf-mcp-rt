@@ -13,6 +13,7 @@ import {
   handleReadCompileLog,
   handleDownloadPdf,
 } from '../../src/mcp/tools/compile.js'
+import { formatBinaryFile, formatPdf } from '../../src/mcp/tools/index.js'
 import { OtEngine } from '../../src/overleaf/ot.js'
 import { FakeSocket } from './fake-socket.js'
 import type { JoinProjectResponse } from '../../src/overleaf/ot.types.js'
@@ -123,17 +124,18 @@ describe('read_doc tool (OT-backed)', () => {
 })
 
 describe('read_file tool (REST-backed via OT tree)', () => {
-  it('looks up fileId via OT tree and fetches via REST', async () => {
+  it('looks up fileId via OT tree and returns bytes + contentType', async () => {
     const { ctx } = buildOtTestCtx()
     server.use(
       http.get('https://o.example/project/p1/file/f-img', () =>
-        HttpResponse.arrayBuffer(new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer), // PNG magic
+        HttpResponse.arrayBuffer(new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer, {
+          headers: { 'Content-Type': 'image/png' },
+        }),
       ),
     )
     const out = await handleReadFile(ctx, { projectId: 'p1', path: 'figures.png' })
-    const decoded = Buffer.from(out.contentBase64, 'base64')
-    expect(decoded[0]).toBe(0x89)
-    expect(decoded[1]).toBe(0x50)
+    expect(out.bytes[0]).toBe(0x89)
+    expect(out.contentType).toBe('image/png')
   })
 
   it('throws NotFoundError when path is not a binary in the tree', async () => {
@@ -251,7 +253,7 @@ describe('read_compile_log tool', () => {
 })
 
 describe('download_pdf tool', () => {
-  it('returns base64-encoded pdf bytes', async () => {
+  it('returns the PDF bytes + contentType', async () => {
     server.use(
       http.post('https://o.example/project/p6/compile', () =>
         HttpResponse.json({
@@ -260,11 +262,69 @@ describe('download_pdf tool', () => {
         }),
       ),
       http.get('https://o.example/project/p6/build/b/output/output.pdf', () =>
-        HttpResponse.arrayBuffer(new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer),
+        HttpResponse.arrayBuffer(new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer, {
+          headers: { 'Content-Type': 'application/pdf' },
+        }),
       ),
     )
     const out = await handleDownloadPdf(ctx, { projectId: 'p6' })
-    const decoded = Buffer.from(out.pdfBase64, 'base64')
-    expect(decoded.toString('utf-8').startsWith('%PDF')).toBe(true)
+    expect(out.bytes.toString('utf-8').startsWith('%PDF')).toBe(true)
+    expect(out.contentType).toBe('application/pdf')
+    expect(out.status).toBe('success')
+  })
+})
+
+describe('MCP envelope: image + pdf rendering', () => {
+  it('read_file returns MCP image content for image MIME', async () => {
+    const { ctx } = buildOtTestCtx()
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+    server.use(
+      http.get('https://o.example/project/p1/file/f-img', () =>
+        HttpResponse.arrayBuffer(png.buffer, {
+          headers: { 'Content-Type': 'image/png' },
+        }),
+      ),
+    )
+    const out = await handleReadFile(ctx, { projectId: 'p1', path: 'figures.png' })
+    const env = formatBinaryFile(out, 'p1', 'figures.png')
+    expect(env.content[0]).toMatchObject({
+      type: 'image',
+      mimeType: 'image/png',
+    })
+    expect(typeof (env.content[0] as { data: string }).data).toBe('string')
+  })
+
+  it('read_file returns MCP text content for text/plain', async () => {
+    const { ctx } = buildOtTestCtx()
+    server.use(
+      http.get('https://o.example/project/p1/file/f-img', () =>
+        HttpResponse.text('hello world\n', {
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        }),
+      ),
+    )
+    const out = await handleReadFile(ctx, { projectId: 'p1', path: 'figures.png' })
+    const env = formatBinaryFile(out, 'p1', 'figures.png')
+    expect(env.content[0]).toMatchObject({
+      type: 'text',
+      text: 'hello world\n',
+    })
+  })
+
+  it('read_file falls back to base64 envelope for unknown binary MIME', async () => {
+    const { ctx } = buildOtTestCtx()
+    server.use(
+      http.get('https://o.example/project/p1/file/f-img', () =>
+        HttpResponse.arrayBuffer(new Uint8Array([0xab, 0xcd]).buffer, {
+          headers: { 'Content-Type': 'application/octet-stream' },
+        }),
+      ),
+    )
+    const out = await handleReadFile(ctx, { projectId: 'p1', path: 'figures.png' })
+    const env = formatBinaryFile(out, 'p1', 'figures.png')
+    expect(env.content[0]).toMatchObject({ type: 'text' })
+    const inner = JSON.parse((env.content[0] as { text: string }).text)
+    expect(inner.contentBase64).toBe(Buffer.from([0xab, 0xcd]).toString('base64'))
+    expect(inner.mimeType).toBe('application/octet-stream')
   })
 })

@@ -60,22 +60,26 @@ describe('OverleafRest.downloadOutputFile', () => {
   it('returns the bytes', async () => {
     server.use(
       http.get('https://o.example/project/p1/build/b1/output/output.log', () =>
-        HttpResponse.text('LaTeX log lines'),
+        HttpResponse.text('LaTeX log lines', { headers: { 'Content-Type': 'text/plain' } }),
       ),
     )
-    const buf = await makeRest().downloadOutputFile('/project/p1/build/b1/output/output.log')
-    expect(buf.toString('utf-8')).toBe('LaTeX log lines')
+    const { bytes, contentType } = await makeRest().downloadOutputFile('/project/p1/build/b1/output/output.log')
+    expect(bytes.toString('utf-8')).toBe('LaTeX log lines')
+    expect(contentType).toMatch(/^text\/plain/)
   })
 })
 
 describe('OverleafRest.downloadFile', () => {
-  it('GETs /project/:id/file/:fid and returns bytes', async () => {
+  it('GETs /project/:id/file/:fid and returns bytes + contentType', async () => {
     server.use(
       http.get('https://o.example/project/p1/file/f1', () =>
-        HttpResponse.arrayBuffer(new Uint8Array([1, 2, 3]).buffer),
+        HttpResponse.arrayBuffer(new Uint8Array([1, 2, 3]).buffer, {
+          headers: { 'Content-Type': 'image/png' },
+        }),
       ),
     )
-    const buf = await makeRest().downloadFile('p1', 'f1')
-    expect(Array.from(buf)).toEqual([1, 2, 3])
+    const { bytes, contentType } = await makeRest().downloadFile('p1', 'f1')
+    expect(Array.from(bytes)).toEqual([1, 2, 3])
+    expect(contentType).toBe('image/png')
   })
 })

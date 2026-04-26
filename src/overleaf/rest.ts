@@ -23,6 +23,11 @@ export interface CompileResponse {
   pdfDownloadDomain?: string
 }
 
+export interface DownloadedBytes {
+  bytes: Buffer
+  contentType: string
+}
+
 export class OverleafRest {
   constructor(private readonly http: OverleafHttp) {}
 
@@ -74,7 +79,7 @@ export class OverleafRest {
     return (await res.json()) as CompileResponse
   }
 
-  async downloadOutputFile(buildUrl: string): Promise<Buffer> {
+  async downloadOutputFile(buildUrl: string): Promise<DownloadedBytes> {
     const res = await this.http.get(buildUrl)
     if (!res.ok) {
       throw new OverleafError(
@@ -82,10 +87,12 @@ export class OverleafRest {
         `output file ${buildUrl} returned ${res.status}`,
       )
     }
-    return Buffer.from(await res.arrayBuffer())
+    const bytes = Buffer.from(await res.arrayBuffer())
+    const contentType = res.headers.get('content-type') ?? 'application/octet-stream'
+    return { bytes, contentType }
   }
 
-  async downloadFile(projectId: string, fileId: string): Promise<Buffer> {
+  async downloadFile(projectId: string, fileId: string): Promise<DownloadedBytes> {
     const res = await this.http.get(
       `/project/${encodeURIComponent(projectId)}/file/${encodeURIComponent(fileId)}`,
     )
@@ -95,6 +102,8 @@ export class OverleafRest {
         `file ${fileId} returned ${res.status}`,
       )
     }
-    return Buffer.from(await res.arrayBuffer())
+    const bytes = Buffer.from(await res.arrayBuffer())
+    const contentType = res.headers.get('content-type') ?? 'application/octet-stream'
+    return { bytes, contentType }
   }
 }

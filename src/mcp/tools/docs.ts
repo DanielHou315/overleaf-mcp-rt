@@ -1,6 +1,7 @@
 import type { ServerContext } from '../server.js'
 import { NotFoundError, OverleafError } from '../../errors.js'
 import type { OtOp } from '../../overleaf/diff.js'
+import type { DownloadedBytes } from '../../overleaf/rest.js'
 
 export async function handleReadDoc(
   ctx: ServerContext,
@@ -18,14 +19,13 @@ export async function handleReadDoc(
 export async function handleReadFile(
   ctx: ServerContext,
   input: { projectId: string; path: string },
-): Promise<{ contentBase64: string }> {
+): Promise<DownloadedBytes> {
   const engine = await ctx.ot.get(input.projectId)
   const fileId = engine.pathToFileId(input.path)
   if (fileId === null) {
     throw new NotFoundError(`No binary file at ${input.path} in project ${input.projectId}`)
   }
-  const buf = await ctx.rest.downloadFile(input.projectId, fileId)
-  return { contentBase64: buf.toString('base64') }
+  return ctx.rest.downloadFile(input.projectId, fileId)
 }
 
 export async function handleWriteDoc(
