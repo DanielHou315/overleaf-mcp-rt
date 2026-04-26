@@ -69,7 +69,10 @@ function minimalJoinResponse(projectId: string): JoinProjectResponse {
       rootFolder: [{
         _id: 'root', name: 'rootFolder',
         docs: [{ _id: 'd-main', name: 'main.tex' }],
-        fileRefs: [{ _id: 'f-img', name: 'figures.png' }],
+        fileRefs: [
+          { _id: 'f-img', name: 'figures.png' },
+          { _id: 'f-mystery', name: 'mystery.bin' },
+        ],
         folders: [],
       }],
     },
@@ -92,7 +95,7 @@ describe('get_project_tree tool (OT-backed)', () => {
   it('returns the live tree from OT state', async () => {
     const { ctx } = buildOtTestCtx()
     const out = await handleGetProjectTree(ctx, { projectId: 'p1' })
-    expect(out.tree.files.sort()).toEqual(['figures.png', 'main.tex'])
+    expect(out.tree.files.sort()).toEqual(['figures.png', 'main.tex', 'mystery.bin'])
     expect(Object.keys(out.tree.folders)).toEqual([])
   })
 
@@ -102,7 +105,7 @@ describe('get_project_tree tool (OT-backed)', () => {
     const engine = await ctx.ot.get('p1')
     sock.simulate('reciveNewDoc', 'root', { _id: 'd2', name: 'extra.tex' })
     const out = await handleGetProjectTree(ctx, { projectId: 'p1' })
-    expect(out.tree.files.sort()).toEqual(['extra.tex', 'figures.png', 'main.tex'])
+    expect(out.tree.files.sort()).toEqual(['extra.tex', 'figures.png', 'main.tex', 'mystery.bin'])
     void engine
   })
 })
@@ -311,17 +314,37 @@ describe('MCP envelope: image + pdf rendering', () => {
     })
   })
 
-  it('read_file falls back to base64 envelope for unknown binary MIME', async () => {
+  it('read_file sniffs path extension when server returns generic octet-stream (Overleaf filestore omits Content-Type)', async () => {
     const { ctx } = buildOtTestCtx()
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
     server.use(
       http.get('https://o.example/project/p1/file/f-img', () =>
-        HttpResponse.arrayBuffer(new Uint8Array([0xab, 0xcd]).buffer, {
+        // Mirror the real Overleaf filestore: no Content-Type header.
+        // Our http layer defaults this to application/octet-stream.
+        HttpResponse.arrayBuffer(png.buffer, {
           headers: { 'Content-Type': 'application/octet-stream' },
         }),
       ),
     )
     const out = await handleReadFile(ctx, { projectId: 'p1', path: 'figures.png' })
     const env = formatBinaryFile(out, 'p1', 'figures.png')
+    expect(env.content[0]).toMatchObject({
+      type: 'image',
+      mimeType: 'image/png',
+    })
+  })
+
+  it('read_file falls back to base64 envelope for unknown extension + generic MIME', async () => {
+    const { ctx } = buildOtTestCtx()
+    server.use(
+      http.get('https://o.example/project/p1/file/f-mystery', () =>
+        HttpResponse.arrayBuffer(new Uint8Array([0xab, 0xcd]).buffer, {
+          headers: { 'Content-Type': 'application/octet-stream' },
+        }),
+      ),
+    )
+    const out = await handleReadFile(ctx, { projectId: 'p1', path: 'mystery.bin' })
+    const env = formatBinaryFile(out, 'p1', 'mystery.bin')
     expect(env.content[0]).toMatchObject({ type: 'text' })
     const inner = JSON.parse((env.content[0] as { text: string }).text)
     expect(inner.contentBase64).toBe(Buffer.from([0xab, 0xcd]).toString('base64'))

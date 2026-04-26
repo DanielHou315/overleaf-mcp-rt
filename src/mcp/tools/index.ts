@@ -188,13 +188,43 @@ function wrap(payload: unknown) {
   }
 }
 
+/** Map common file extensions to MIME types. Used when the server's
+ *  Content-Type is missing or generic (Overleaf's filestore returns no
+ *  Content-Type and sets `x-content-type-options: nosniff`, so the path
+ *  extension is the only signal we have). */
+const EXT_TO_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+  pdf: 'application/pdf',
+  txt: 'text/plain',
+  csv: 'text/csv',
+  json: 'application/json',
+  xml: 'application/xml',
+  md: 'text/markdown',
+  html: 'text/html',
+}
+
+function effectiveMime(serverMime: string, path: string): string {
+  // Trust an explicit non-generic MIME from the server.
+  if (serverMime && serverMime !== 'application/octet-stream') return serverMime
+  const ext = path.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]
+  if (ext && EXT_TO_MIME[ext]) return EXT_TO_MIME[ext]
+  return serverMime || 'application/octet-stream'
+}
+
 export function formatBinaryFile(
   result: { bytes: Buffer; contentType: string },
   projectId: string,
   path: string,
 ): { content: Array<unknown> } {
   const base64 = result.bytes.toString('base64')
-  const ct = result.contentType
+  const ct = effectiveMime(result.contentType, path)
   if (ct.startsWith('image/')) {
     return { content: [{ type: 'image', data: base64, mimeType: ct }] }
   }
