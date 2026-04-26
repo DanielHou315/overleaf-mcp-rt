@@ -61,3 +61,30 @@ export async function handleCreateDoc(
   }
   return { ok: true, id, kind: 'doc' }
 }
+
+export async function handleUploadFile(
+  ctx: ServerContext,
+  input: {
+    projectId: string
+    parentPath: string
+    name: string
+    contentBase64: string
+    mimeType: string
+  },
+): Promise<MutationResult> {
+  const parentFolderId = await resolveParentFolderId(ctx, input.projectId, input.parentPath)
+  const bytes = new Uint8Array(Buffer.from(input.contentBase64, 'base64'))
+  const { id, kind } = await ctx.rest.uploadFile(
+    input.projectId,
+    parentFolderId,
+    input.name,
+    bytes,
+    input.mimeType,
+  )
+  const engine = await ctx.ot.get(input.projectId)
+  const newPath = input.parentPath === '' ? input.name : `${input.parentPath}/${input.name}`
+  await engine.waitForPath(newPath).catch(() => {
+    /* tree will catch up shortly */
+  })
+  return { ok: true, id, kind }
+}

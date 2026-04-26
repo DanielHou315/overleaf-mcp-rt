@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
 import { setupServer } from 'msw/node'
 import { http, HttpResponse } from 'msw'
-import { handleCreateDoc, handleCreateFolder } from '../../src/mcp/tools/tree.js'
+import { handleCreateDoc, handleCreateFolder, handleUploadFile } from '../../src/mcp/tools/tree.js'
 import { OtEngine } from '../../src/overleaf/ot.js'
 import { FakeSocket } from './fake-socket.js'
 import { buildContext } from '../../src/mcp/server.js'
@@ -150,5 +150,52 @@ describe('create_doc tool', () => {
     })
     expect(out).toEqual({ ok: true, id: 'd-new', kind: 'doc' })
     expect(appliedOps).toEqual([{ p: 0, i: 'Hello v0.3' }])
+  })
+})
+
+describe('upload_file tool', () => {
+  it('decodes base64 and uploads with the given mimeType', async () => {
+    const { ctx, sock } = buildTreeTestCtx()
+    let receivedForm: FormData | null = null
+    server.use(
+      http.post('https://o.example/project/p1/upload', async ({ request }) => {
+        receivedForm = await request.formData()
+        setTimeout(() => {
+          sock.simulate('reciveNewFile', 'root', { _id: 'f-up', name: 'logo.png' })
+        }, 5)
+        return HttpResponse.json({ success: true, entity_id: 'f-up', entity_type: 'file' })
+      }),
+    )
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64')
+    const out = await handleUploadFile(ctx, {
+      projectId: 'p1',
+      parentPath: '',
+      name: 'logo.png',
+      contentBase64: png,
+      mimeType: 'image/png',
+    })
+    expect(out).toEqual({ ok: true, id: 'f-up', kind: 'file' })
+    expect(receivedForm!.get('type')).toBe('image/png')
+  })
+
+  it('returns kind=doc when server auto-promotes a .tex upload', async () => {
+    const { ctx, sock } = buildTreeTestCtx()
+    server.use(
+      http.post('https://o.example/project/p1/upload', () => {
+        setTimeout(() => {
+          sock.simulate('reciveNewDoc', 'root', { _id: 'd-promo', name: 'extra.tex' })
+        }, 5)
+        return HttpResponse.json({ success: true, entity_id: 'd-promo', entity_type: 'doc' })
+      }),
+    )
+    const tex = Buffer.from('\\section{Extra}\n').toString('base64')
+    const out = await handleUploadFile(ctx, {
+      projectId: 'p1',
+      parentPath: '',
+      name: 'extra.tex',
+      contentBase64: tex,
+      mimeType: 'text/x-tex',
+    })
+    expect(out).toEqual({ ok: true, id: 'd-promo', kind: 'doc' })
   })
 })
