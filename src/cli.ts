@@ -7,7 +7,11 @@ import { stdin as input, stdout as output, stderr } from 'node:process'
 import { loadConfig } from './config.js'
 import { validateCookie, passportLogin } from './overleaf/auth.js'
 import { buildContext, runMcpServer } from './mcp/server.js'
-import { InvalidConfigError, OverleafError } from './errors.js'
+import { InvalidConfigError, OverleafError, AuthFailedError } from './errors.js'
+import { OverleafHttp } from './overleaf/http.js'
+import { OverleafRest } from './overleaf/rest.js'
+import { OverleafSocket } from './overleaf/socket.js'
+import { OtEngine } from './overleaf/ot.js'
 
 const HELP = `
 overleaf-mcp — MCP server for Overleaf Community Edition (v0.3)
@@ -26,6 +30,121 @@ Environment variables:
   OVERLEAF_DEBUG              "1" for verbose stderr logging.
 `
 
+export interface DiagnoseConfig {
+  url: string
+  sessionCookie: string
+  extraHeaders: Record<string, string>
+}
+
+export interface DiagnoseOptions {
+  writeLine?: (line: string) => void
+  skipOt?: boolean
+  projectId?: string
+}
+
+export interface DiagnoseResult {
+  ok: boolean
+  steps: Array<{ name: string; status: 'ok' | 'fail' | 'warn'; detail?: string }>
+}
+
+/**
+ * Stepped connectivity / auth / OT probe. Each step runs independently; a
+ * failure in one is logged but the next steps still run when they don't
+ * structurally depend on it.
+ */
+export async function runDiagnose(
+  cfg: DiagnoseConfig,
+  options: DiagnoseOptions = {},
+): Promise<DiagnoseResult> {
+  const writeLine = options.writeLine ?? ((s: string) => stderr.write(s + '\n'))
+  const steps: DiagnoseResult['steps'] = []
+  let ok = true
+
+  // Step 1: config
+  steps.push({ name: 'config', status: 'ok', detail: `URL ${cfg.url}` })
+  writeLine(`✓ config — URL ${cfg.url}`)
+
+  // Step 2: REST handshake — GET /project, capture CF headers + scrape CSRF
+  let csrfToken: string | null = null
+  let cfDetected = false
+  try {
+    const headers = new Headers({ Cookie: cfg.sessionCookie })
+    for (const [k, v] of Object.entries(cfg.extraHeaders)) headers.set(k, v)
+    const res = await fetch(new URL('/project', cfg.url + '/').toString(), {
+      method: 'GET', headers, redirect: 'manual',
+    })
+    cfDetected = res.headers.has('cf-ray') || res.headers.has('cf-mitigated')
+    if (res.status === 302 && (res.headers.get('location') ?? '').includes('/login')) {
+      throw new AuthFailedError('Session redirected to /login (cookie expired)')
+    }
+    if (!res.ok) {
+      throw new OverleafError('OVERLEAF_GENERIC', `GET /project returned ${res.status}`)
+    }
+    const html = await res.text()
+    const m = html.match(/<meta\s+name="ol-csrfToken"\s+content="([^"]+)"/)
+    if (!m) throw new OverleafError('OVERLEAF_GENERIC', 'CSRF meta not found')
+    csrfToken = m[1]!
+    steps.push({ name: 'REST handshake', status: 'ok' })
+    writeLine('✓ REST handshake — cookie valid, CSRF scraped')
+  } catch (err) {
+    ok = false
+    const msg = err instanceof OverleafError ? `${err.code}: ${err.message}` : String((err as Error).message ?? err)
+    steps.push({ name: 'REST handshake', status: 'fail', detail: msg })
+    writeLine(`✗ REST handshake — ${msg}`)
+    return { ok, steps } // Subsequent steps require a session
+  }
+
+  // Step 3: Reverse-proxy hint
+  if (cfDetected && Object.keys(cfg.extraHeaders).length === 0) {
+    steps.push({
+      name: 'reverse-proxy',
+      status: 'warn',
+      detail: 'CF-Access headers detected on /project response but OVERLEAF_EXTRA_HEADERS is empty; OT handshake may fail',
+    })
+    writeLine('⚠ reverse-proxy — CF detected but no extra headers configured')
+  } else if (cfDetected) {
+    writeLine('✓ reverse-proxy — CF detected, extraHeaders configured')
+  }
+
+  // Step 4: project listing
+  let projectId: string | undefined = options.projectId
+  try {
+    const http = new OverleafHttp({ url: cfg.url, sessionCookie: cfg.sessionCookie, csrfToken: csrfToken ?? undefined, extraHeaders: cfg.extraHeaders })
+    const rest = new OverleafRest(http)
+    const projects = await rest.listProjects()
+    steps.push({ name: 'project listing', status: 'ok', detail: `${projects.length} project(s)` })
+    writeLine(`✓ project listing — ${projects.length} project(s) accessible`)
+    projectId = projectId ?? projects[0]?.id
+  } catch (err) {
+    ok = false
+    const msg = err instanceof OverleafError ? `${err.code}: ${err.message}` : String((err as Error).message ?? err)
+    steps.push({ name: 'project listing', status: 'fail', detail: msg })
+    writeLine(`✗ project listing — ${msg}`)
+  }
+
+  // Step 5: OT handshake
+  if (!options.skipOt && projectId) {
+    try {
+      const sock = new OverleafSocket({ url: cfg.url, projectId, sessionCookie: cfg.sessionCookie, extraHeaders: cfg.extraHeaders })
+      const engine = new OtEngine({ socket: sock, projectId })
+      await Promise.race([
+        engine.connect(),
+        new Promise((_, reject) => setTimeout(() => reject(new OverleafError('OVERLEAF_GENERIC', 'OT handshake timeout 8s')), 8000)),
+      ])
+      steps.push({ name: 'OT handshake', status: 'ok', detail: `publicId ${engine.publicId}` })
+      writeLine(`✓ OT handshake — publicId ${engine.publicId}`)
+      engine.disconnect()
+    } catch (err) {
+      ok = false
+      const msg = err instanceof OverleafError ? `${err.code}: ${err.message}` : String((err as Error).message ?? err)
+      steps.push({ name: 'OT handshake', status: 'fail', detail: msg })
+      writeLine(`✗ OT handshake — ${msg}`)
+    }
+  }
+
+  return { ok, steps }
+}
+
 async function main() {
   const [, , cmd, ...rest] = process.argv
 
@@ -39,7 +158,7 @@ async function main() {
     return
   }
 
-  if (cmd === 'ls' || cmd === 'diagnose') {
+  if (cmd === 'ls') {
     const cfg = loadConfig()
     const csrfToken = await validateCookie({
       url: cfg.url,
@@ -47,18 +166,20 @@ async function main() {
       extraHeaders: cfg.extraHeaders,
     })
     const ctx = buildContext({ ...cfg, csrfToken })
-    if (cmd === 'ls') {
-      const projects = await ctx.rest.listProjects()
-      for (const p of projects) {
-        output.write(`${p.id}\t${p.name}\t${p.lastUpdated}\n`)
-      }
-    } else {
-      stderr.write(`✓ Connected to ${cfg.url}\n`)
-      stderr.write(`✓ Auth (cookie + CSRF) valid\n`)
-      const projects = await ctx.rest.listProjects()
-      stderr.write(`✓ ${projects.length} project(s) accessible\n`)
+    const projects = await ctx.rest.listProjects()
+    for (const p of projects) {
+      output.write(`${p.id}\t${p.name}\t${p.lastUpdated}\n`)
     }
     return
+  }
+
+  if (cmd === 'diagnose') {
+    const cfg = loadConfig()
+    const projectId = rest.find((a) => a === '--project-id') != null
+      ? rest[rest.indexOf('--project-id') + 1]
+      : undefined
+    const result = await runDiagnose(cfg, { projectId })
+    process.exit(result.ok ? 0 : 2)
   }
 
   // Default: MCP stdio server
