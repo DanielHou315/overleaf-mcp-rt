@@ -110,4 +110,38 @@ describe('loadConfig', () => {
       }),
     ).toThrow(/must start with http:\/\/ or https:\/\//)
   })
+
+  it('strips trailing slashes via URL parsing (no corruption of bare https://)', () => {
+    const cfg = loadConfig({
+      env: { OVERLEAF_URL: 'https://o.example.com/', OVERLEAF_SESSION_COOKIE: 'c' },
+      credentialsPath: join(tmp, 'noexist.json'),
+    })
+    expect(cfg.url).toBe('https://o.example.com')
+  })
+
+  it('preserves a configured subpath (no trailing slash)', () => {
+    const cfg = loadConfig({
+      env: { OVERLEAF_URL: 'https://corp.example.com/overleaf/', OVERLEAF_SESSION_COOKIE: 'c' },
+      credentialsPath: join(tmp, 'noexist.json'),
+    })
+    expect(cfg.url).toBe('https://corp.example.com/overleaf')
+  })
+
+  it('throws InvalidConfigError when URL has no host (e.g. bare https://)', () => {
+    expect(() =>
+      loadConfig({
+        env: { OVERLEAF_URL: 'https://', OVERLEAF_SESSION_COOKIE: 'c' },
+        credentialsPath: join(tmp, 'nope.json'),
+      }),
+    ).toThrow(/host/i)
+  })
+
+  it('throws InvalidConfigError when URL is malformed', () => {
+    expect(() =>
+      loadConfig({
+        env: { OVERLEAF_URL: 'http:/missing-slashes', OVERLEAF_SESSION_COOKIE: 'c' },
+        credentialsPath: join(tmp, 'nope.json'),
+      }),
+    ).toThrow(/InvalidConfigError|invalid url/i)
+  })
 })
