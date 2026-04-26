@@ -43,3 +43,26 @@ describe('OverleafRest.createDoc', () => {
     await expect(makeRest().createDoc('p1', 'root', 'x.tex')).rejects.toThrow(/403/)
   })
 })
+
+describe('OverleafRest.createFolder', () => {
+  it('POSTs name + parent_folder_id and returns the new id', async () => {
+    server.use(
+      http.post('https://o.example/project/p1/folder', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        expect(body).toEqual({ name: 'chapters', parent_folder_id: 'root' })
+        return HttpResponse.json({ _id: 'fold-new', name: 'chapters', docs: [], fileRefs: [], folders: [] })
+      }),
+    )
+    const out = await makeRest().createFolder('p1', 'root', 'chapters')
+    expect(out).toEqual({ id: 'fold-new' })
+  })
+
+  it('throws on non-OK response', async () => {
+    server.use(
+      http.post('https://o.example/project/p1/folder', () =>
+        HttpResponse.text('bad', { status: 400 }),
+      ),
+    )
+    await expect(makeRest().createFolder('p1', 'root', 'x')).rejects.toThrow(/400/)
+  })
+})

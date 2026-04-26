@@ -135,4 +135,27 @@ export class OverleafRest {
     }
     return { id: json._id }
   }
+
+  /** Create an empty folder under `parentFolderId`. Workshop ref: addFolder. */
+  async createFolder(
+    projectId: string,
+    parentFolderId: string,
+    name: string,
+  ): Promise<{ id: string }> {
+    const res = await this.http.postJson(`/project/${encodeURIComponent(projectId)}/folder`, {
+      name,
+      parent_folder_id: parentFolderId,
+    })
+    if (!res.ok) {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `createFolder returned ${res.status} for ${name}`,
+      )
+    }
+    const json = (await res.json()) as { _id?: string }
+    if (!json._id) {
+      throw new OverleafError('OVERLEAF_GENERIC', 'createFolder response missing _id')
+    }
+    return { id: json._id }
+  }
 }
