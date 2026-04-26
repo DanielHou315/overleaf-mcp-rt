@@ -158,4 +158,50 @@ export class OverleafRest {
     }
     return { id: json._id }
   }
+
+  /**
+   * Upload a binary file under `parentFolderId`. The server may auto-promote
+   * the upload to a doc if the filename matches the configured textExtensions
+   * — in that case we surface `kind: 'doc'`.
+   *
+   * Workshop reference: src/api/base.ts uploadFile (uses multipart form-data).
+   */
+  async uploadFile(
+    projectId: string,
+    parentFolderId: string,
+    name: string,
+    bytes: Uint8Array,
+    mimeType: string,
+  ): Promise<{ id: string; kind: 'doc' | 'file' }> {
+    const form = new FormData()
+    form.append('targetFolderId', parentFolderId)
+    form.append('name', name)
+    form.append('type', mimeType)
+    form.append(
+      'qqfile',
+      new File([bytes], name, { type: mimeType }),
+      name,
+    )
+    const path =
+      `/project/${encodeURIComponent(projectId)}/upload` +
+      `?folder_id=${encodeURIComponent(parentFolderId)}`
+    const res = await this.http.postForm(path, form)
+    if (!res.ok) {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `uploadFile returned ${res.status} for ${name}`,
+      )
+    }
+    const json = (await res.json()) as { entity_id?: string; entity_type?: string }
+    if (!json.entity_id || !json.entity_type) {
+      throw new OverleafError('OVERLEAF_GENERIC', 'uploadFile response missing entity_id/entity_type')
+    }
+    if (json.entity_type !== 'doc' && json.entity_type !== 'file') {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `uploadFile got unexpected entity_type ${json.entity_type}`,
+      )
+    }
+    return { id: json.entity_id, kind: json.entity_type }
+  }
 }

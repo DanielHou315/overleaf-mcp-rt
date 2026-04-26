@@ -66,3 +66,46 @@ describe('OverleafRest.createFolder', () => {
     await expect(makeRest().createFolder('p1', 'root', 'x')).rejects.toThrow(/400/)
   })
 })
+
+describe('OverleafRest.uploadFile', () => {
+  it('posts multipart with targetFolderId/name/type/qqfile and returns id+kind', async () => {
+    let receivedForm: FormData | null = null
+    server.use(
+      http.post('https://o.example/project/p1/upload', async ({ request }) => {
+        const url = new URL(request.url)
+        expect(url.searchParams.get('folder_id')).toBe('root')
+        receivedForm = await request.formData()
+        return HttpResponse.json({ success: true, entity_id: 'f-up', entity_type: 'file' })
+      }),
+    )
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+    const out = await makeRest().uploadFile('p1', 'root', 'logo.png', bytes, 'image/png')
+    expect(out).toEqual({ id: 'f-up', kind: 'file' })
+    expect(receivedForm!.get('targetFolderId')).toBe('root')
+    expect(receivedForm!.get('name')).toBe('logo.png')
+    expect(receivedForm!.get('type')).toBe('image/png')
+    const upload = receivedForm!.get('qqfile')
+    expect(upload).toBeInstanceOf(File)
+  })
+
+  it('passes through entity_type: doc when server auto-promotes', async () => {
+    server.use(
+      http.post('https://o.example/project/p1/upload', () =>
+        HttpResponse.json({ success: true, entity_id: 'd-promo', entity_type: 'doc' }),
+      ),
+    )
+    const out = await makeRest().uploadFile('p1', 'root', 'main.tex', new Uint8Array([1]), 'text/plain')
+    expect(out).toEqual({ id: 'd-promo', kind: 'doc' })
+  })
+
+  it('throws on non-OK response', async () => {
+    server.use(
+      http.post('https://o.example/project/p1/upload', () =>
+        HttpResponse.text('quota', { status: 413 }),
+      ),
+    )
+    await expect(
+      makeRest().uploadFile('p1', 'root', 'big.bin', new Uint8Array([1]), 'application/octet-stream'),
+    ).rejects.toThrow(/413/)
+  })
+})
