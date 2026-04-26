@@ -1,7 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
 import { setupServer } from 'msw/node'
 import { http, HttpResponse } from 'msw'
-import { handleCreateDoc, handleCreateFolder, handleUploadFile } from '../../src/mcp/tools/tree.js'
+import {
+  handleCreateDoc,
+  handleCreateFolder,
+  handleUploadFile,
+  handleRename,
+  handleMove,
+  handleDeleteEntity,
+} from '../../src/mcp/tools/tree.js'
 import { OtEngine } from '../../src/overleaf/ot.js'
 import { FakeSocket } from './fake-socket.js'
 import { buildContext } from '../../src/mcp/server.js'
@@ -197,5 +204,84 @@ describe('upload_file tool', () => {
       mimeType: 'text/x-tex',
     })
     expect(out).toEqual({ ok: true, id: 'd-promo', kind: 'doc' })
+  })
+})
+
+describe('rename tool', () => {
+  it('resolves path → kind+id and POSTs rename', async () => {
+    const { ctx, sock } = buildTreeTestCtx()
+    let bodyJson: unknown = null
+    server.use(
+      http.post('https://o.example/project/p1/doc/d-main/rename', async ({ request }) => {
+        bodyJson = await request.json()
+        setTimeout(() => {
+          sock.simulate('reciveEntityRename', 'd-main', 'renamed.tex')
+        }, 5)
+        return new HttpResponse(null, { status: 200 })
+      }),
+    )
+    const out = await handleRename(ctx, { projectId: 'p1', path: 'main.tex', newName: 'renamed.tex' })
+    expect(out).toEqual({ ok: true, id: 'd-main', kind: 'doc' })
+    expect(bodyJson).toEqual({ name: 'renamed.tex' })
+    const engine = await ctx.ot.get('p1')
+    expect(engine.pathToDocId('renamed.tex')).toBe('d-main')
+  })
+
+  it('throws NotFoundError when path does not resolve', async () => {
+    const { ctx } = buildTreeTestCtx()
+    await expect(
+      handleRename(ctx, { projectId: 'p1', path: 'missing.tex', newName: 'x.tex' }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+})
+
+describe('move tool', () => {
+  it('resolves path → kind+id and POSTs move with new parent', async () => {
+    const { ctx, sock } = buildTreeTestCtx()
+    let bodyJson: unknown = null
+    server.use(
+      http.post('https://o.example/project/p1/doc/d-main/move', async ({ request }) => {
+        bodyJson = await request.json()
+        setTimeout(() => sock.simulate('reciveEntityMove', 'd-main', 'sub'), 5)
+        return new HttpResponse(null, { status: 200 })
+      }),
+    )
+    const out = await handleMove(ctx, { projectId: 'p1', path: 'main.tex', newParentPath: 'subdir' })
+    expect(out).toEqual({ ok: true, id: 'd-main', kind: 'doc' })
+    expect(bodyJson).toEqual({ folder_id: 'sub' })
+  })
+
+  it('throws when newParentPath is not a folder', async () => {
+    const { ctx } = buildTreeTestCtx()
+    await expect(
+      handleMove(ctx, { projectId: 'p1', path: 'main.tex', newParentPath: 'nope' }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+})
+
+describe('delete_entity tool', () => {
+  it.each([
+    ['main.tex', 'd-main', 'doc'],
+    ['subdir', 'sub', 'folder'],
+  ] as const)('DELETEs entity at %s', async (path, id, kind) => {
+    const { ctx, sock } = buildTreeTestCtx()
+    let called = false
+    server.use(
+      http.delete(`https://o.example/project/p1/${kind}/${id}`, () => {
+        called = true
+        setTimeout(() => sock.simulate('removeEntity', id), 5)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    const out = await handleDeleteEntity(ctx, { projectId: 'p1', path })
+    expect(out).toEqual({ ok: true, id, kind })
+    expect(called).toBe(true)
+  })
+
+  it('throws NotFoundError on missing path', async () => {
+    const { ctx } = buildTreeTestCtx()
+    await expect(
+      handleDeleteEntity(ctx, { projectId: 'p1', path: 'nope' }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
 })

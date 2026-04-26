@@ -88,3 +88,62 @@ export async function handleUploadFile(
   })
   return { ok: true, id, kind }
 }
+
+async function resolvePathEntity(
+  ctx: ServerContext,
+  projectId: string,
+  path: string,
+): Promise<{ kind: 'doc' | 'file' | 'folder'; id: string }> {
+  const engine = await ctx.ot.get(projectId)
+  const entity = engine.pathToEntity(path)
+  if (!entity) {
+    throw new NotFoundError(`No entity at ${path} in project ${projectId}`, {
+      projectId, path,
+    })
+  }
+  return entity
+}
+
+export async function handleRename(
+  ctx: ServerContext,
+  input: { projectId: string; path: string; newName: string },
+): Promise<MutationResult> {
+  const { kind, id } = await resolvePathEntity(ctx, input.projectId, input.path)
+  await ctx.rest.renameEntity(input.projectId, kind, id, input.newName)
+  // Best-effort wait for the broadcast.
+  const engine = await ctx.ot.get(input.projectId)
+  const lastSlash = input.path.lastIndexOf('/')
+  const newPath = lastSlash >= 0
+    ? `${input.path.slice(0, lastSlash)}/${input.newName}`
+    : input.newName
+  await engine.waitForPath(newPath).catch(() => undefined)
+  return { ok: true, id, kind }
+}
+
+export async function handleMove(
+  ctx: ServerContext,
+  input: { projectId: string; path: string; newParentPath: string },
+): Promise<MutationResult> {
+  const { kind, id } = await resolvePathEntity(ctx, input.projectId, input.path)
+  const newParentFolderId = await resolveParentFolderId(
+    ctx,
+    input.projectId,
+    input.newParentPath,
+  )
+  await ctx.rest.moveEntity(input.projectId, kind, id, newParentFolderId)
+  const engine = await ctx.ot.get(input.projectId)
+  const lastSlash = input.path.lastIndexOf('/')
+  const name = lastSlash >= 0 ? input.path.slice(lastSlash + 1) : input.path
+  const newPath = input.newParentPath === '' ? name : `${input.newParentPath}/${name}`
+  await engine.waitForPath(newPath).catch(() => undefined)
+  return { ok: true, id, kind }
+}
+
+export async function handleDeleteEntity(
+  ctx: ServerContext,
+  input: { projectId: string; path: string },
+): Promise<MutationResult> {
+  const { kind, id } = await resolvePathEntity(ctx, input.projectId, input.path)
+  await ctx.rest.deleteEntity(input.projectId, kind, id)
+  return { ok: true, id, kind }
+}
