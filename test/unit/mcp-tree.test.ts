@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
 import { setupServer } from 'msw/node'
 import { http, HttpResponse } from 'msw'
-import { handleCreateFolder } from '../../src/mcp/tools/tree.js'
+import { handleCreateDoc, handleCreateFolder } from '../../src/mcp/tools/tree.js'
 import { OtEngine } from '../../src/overleaf/ot.js'
 import { FakeSocket } from './fake-socket.js'
 import { buildContext } from '../../src/mcp/server.js'
@@ -99,5 +99,56 @@ describe('create_folder tool', () => {
     await expect(
       handleCreateFolder(ctx, { projectId: 'p1', parentPath: 'main.tex', name: 'x' }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+})
+
+describe('create_doc tool', () => {
+  it('creates an empty doc when content is omitted', async () => {
+    const { ctx, sock } = buildTreeTestCtx()
+    server.use(
+      http.post('https://o.example/project/p1/doc', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        expect(body).toEqual({ name: 'notes.tex', parent_folder_id: 'root' })
+        setTimeout(() => {
+          sock.simulate('reciveNewDoc', 'root', { _id: 'd-new', name: 'notes.tex' })
+        }, 5)
+        return HttpResponse.json({ _id: 'd-new' })
+      }),
+    )
+    const out = await handleCreateDoc(ctx, { projectId: 'p1', parentPath: '', name: 'notes.tex' })
+    expect(out).toEqual({ ok: true, id: 'd-new', kind: 'doc' })
+    const engine = await ctx.ot.get('p1')
+    expect(engine.pathToDocId('notes.tex')).toBe('d-new')
+  })
+
+  it('writes content via OT after creation when content is provided', async () => {
+    const { ctx, sock } = buildTreeTestCtx()
+    let appliedOps: unknown = null
+    server.use(
+      http.post('https://o.example/project/p1/doc', () => {
+        setTimeout(() => {
+          sock.simulate('reciveNewDoc', 'root', { _id: 'd-new', name: 'notes.tex' })
+        }, 5)
+        return HttpResponse.json({ _id: 'd-new' })
+      }),
+    )
+    sock.respondToEmit('joinDoc', () => [null, [''], 0, []])
+    sock.respondToEmit('applyOtUpdate', (_docId, update) => {
+      appliedOps = (update as { op: unknown }).op
+      queueMicrotask(() => sock.simulate('otUpdateApplied', {
+        doc: 'd-new',
+        op: (update as { op: unknown }).op,
+        v: 0,
+      }))
+      return [null]
+    })
+    const out = await handleCreateDoc(ctx, {
+      projectId: 'p1',
+      parentPath: '',
+      name: 'notes.tex',
+      content: 'Hello v0.3',
+    })
+    expect(out).toEqual({ ok: true, id: 'd-new', kind: 'doc' })
+    expect(appliedOps).toEqual([{ p: 0, i: 'Hello v0.3' }])
   })
 })

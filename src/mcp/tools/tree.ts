@@ -44,3 +44,20 @@ export async function handleCreateFolder(
   })
   return { ok: true, id, kind: 'folder' }
 }
+
+export async function handleCreateDoc(
+  ctx: ServerContext,
+  input: { projectId: string; parentPath: string; name: string; content?: string },
+): Promise<MutationResult> {
+  const parentFolderId = await resolveParentFolderId(ctx, input.projectId, input.parentPath)
+  const { id } = await ctx.rest.createDoc(input.projectId, parentFolderId, input.name)
+  const engine = await ctx.ot.get(input.projectId)
+  const newPath = input.parentPath === '' ? input.name : `${input.parentPath}/${input.name}`
+  await engine.waitForPath(newPath).catch(() => {
+    // Broadcast hasn't caught up; OT-write below will fail loudly if needed.
+  })
+  if (input.content !== undefined && input.content !== '') {
+    await engine.writeDoc(id, input.content)
+  }
+  return { ok: true, id, kind: 'doc' }
+}
