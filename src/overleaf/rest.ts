@@ -54,18 +54,6 @@ export class OverleafRest {
     }))
   }
 
-  async downloadProjectZip(projectId: string): Promise<Buffer> {
-    const res = await this.http.get(`/project/${encodeURIComponent(projectId)}/download/zip`)
-    if (!res.ok) {
-      throw new OverleafError(
-        'OVERLEAF_GENERIC',
-        `download/zip returned ${res.status} for ${projectId}`,
-      )
-    }
-    const arrayBuf = await res.arrayBuffer()
-    return Buffer.from(arrayBuf)
-  }
-
   async compile(
     projectId: string,
     opts: { draft?: boolean; stopOnFirstError?: boolean; rootResourcePath?: string } = {},

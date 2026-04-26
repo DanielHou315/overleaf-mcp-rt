@@ -15,7 +15,6 @@ async function compileAndCache(
   const res = await ctx.rest.compile(projectId, opts)
   const pdf = res.outputFiles.find((f) => f.type === 'pdf' || f.path === 'output.pdf')
   const log = res.outputFiles.find((f) => f.type === 'log' || f.path === 'output.log')
-  ctx.cache.invalidate(projectId)
   return {
     status: res.status,
     pdfUrl: pdf?.url ?? null,

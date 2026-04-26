@@ -20,7 +20,6 @@ import type { JoinProjectResponse } from '../../src/overleaf/ot.types.js'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const FIXTURES = join(__dirname, '..', 'fixtures')
 const projectListHtml = readFileSync(join(FIXTURES, 'project-list.html'), 'utf-8')
-const projectZip = readFileSync(join(FIXTURES, 'project.zip'))
 
 const server = setupServer()
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
@@ -34,10 +33,6 @@ const ctx = buildContext({
   debug: false,
   csrfToken: 'csrf',
 })
-
-function arrayBufferOf(buf: Buffer): ArrayBuffer {
-  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
-}
 
 function buildOtTestCtx() {
   const sock = new FakeSocket()
