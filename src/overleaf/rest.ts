@@ -106,4 +106,157 @@ export class OverleafRest {
     const contentType = res.headers.get('content-type') ?? 'application/octet-stream'
     return { bytes, contentType }
   }
+
+  /**
+   * Create an empty text doc under `parentFolderId` with `name`.
+   * Returns the new doc's id. The caller can subsequently `write_doc`
+   * via OT to populate it.
+   *
+   * Workshop reference: src/api/base.ts addDoc.
+   */
+  async createDoc(
+    projectId: string,
+    parentFolderId: string,
+    name: string,
+  ): Promise<{ id: string }> {
+    const res = await this.http.postJson(`/project/${encodeURIComponent(projectId)}/doc`, {
+      name,
+      parent_folder_id: parentFolderId,
+    })
+    if (!res.ok) {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `createDoc returned ${res.status} for ${name}`,
+      )
+    }
+    const json = (await res.json()) as { _id?: string }
+    if (!json._id) {
+      throw new OverleafError('OVERLEAF_GENERIC', 'createDoc response missing _id')
+    }
+    return { id: json._id }
+  }
+
+  /** Create an empty folder under `parentFolderId`. Workshop ref: addFolder. */
+  async createFolder(
+    projectId: string,
+    parentFolderId: string,
+    name: string,
+  ): Promise<{ id: string }> {
+    const res = await this.http.postJson(`/project/${encodeURIComponent(projectId)}/folder`, {
+      name,
+      parent_folder_id: parentFolderId,
+    })
+    if (!res.ok) {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `createFolder returned ${res.status} for ${name}`,
+      )
+    }
+    const json = (await res.json()) as { _id?: string }
+    if (!json._id) {
+      throw new OverleafError('OVERLEAF_GENERIC', 'createFolder response missing _id')
+    }
+    return { id: json._id }
+  }
+
+  /**
+   * Upload a binary file under `parentFolderId`. The server may auto-promote
+   * the upload to a doc if the filename matches the configured textExtensions
+   * — in that case we surface `kind: 'doc'`.
+   *
+   * Workshop reference: src/api/base.ts uploadFile (uses multipart form-data).
+   */
+  async uploadFile(
+    projectId: string,
+    parentFolderId: string,
+    name: string,
+    bytes: Uint8Array,
+    mimeType: string,
+  ): Promise<{ id: string; kind: 'doc' | 'file' }> {
+    const form = new FormData()
+    form.append('targetFolderId', parentFolderId)
+    form.append('name', name)
+    form.append('type', mimeType)
+    form.append(
+      'qqfile',
+      new File([bytes], name, { type: mimeType }),
+      name,
+    )
+    const path =
+      `/project/${encodeURIComponent(projectId)}/upload` +
+      `?folder_id=${encodeURIComponent(parentFolderId)}`
+    const res = await this.http.postForm(path, form)
+    if (!res.ok) {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `uploadFile returned ${res.status} for ${name}`,
+      )
+    }
+    const json = (await res.json()) as { entity_id?: string; entity_type?: string }
+    if (!json.entity_id || !json.entity_type) {
+      throw new OverleafError('OVERLEAF_GENERIC', 'uploadFile response missing entity_id/entity_type')
+    }
+    if (json.entity_type !== 'doc' && json.entity_type !== 'file') {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `uploadFile got unexpected entity_type ${json.entity_type}`,
+      )
+    }
+    return { id: json.entity_id, kind: json.entity_type }
+  }
+
+  /** Move an entity to a new parent folder. Workshop ref: moveEntity. */
+  async moveEntity(
+    projectId: string,
+    kind: 'doc' | 'file' | 'folder',
+    entityId: string,
+    newParentFolderId: string,
+  ): Promise<void> {
+    const res = await this.http.postJson(
+      `/project/${encodeURIComponent(projectId)}/${kind}/${encodeURIComponent(entityId)}/move`,
+      { folder_id: newParentFolderId },
+    )
+    if (!res.ok) {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `moveEntity ${kind} ${entityId} returned ${res.status}`,
+      )
+    }
+  }
+
+  /** Rename an entity. Workshop ref: renameEntity. */
+  async renameEntity(
+    projectId: string,
+    kind: 'doc' | 'file' | 'folder',
+    entityId: string,
+    newName: string,
+  ): Promise<void> {
+    const res = await this.http.postJson(
+      `/project/${encodeURIComponent(projectId)}/${kind}/${encodeURIComponent(entityId)}/rename`,
+      { name: newName },
+    )
+    if (!res.ok) {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `renameEntity ${kind} ${entityId} returned ${res.status}`,
+      )
+    }
+  }
+
+  /** Delete an entity. Workshop ref: deleteEntity. */
+  async deleteEntity(
+    projectId: string,
+    kind: 'doc' | 'file' | 'folder',
+    entityId: string,
+  ): Promise<void> {
+    const res = await this.http.delete(
+      `/project/${encodeURIComponent(projectId)}/${kind}/${encodeURIComponent(entityId)}`,
+    )
+    if (!res.ok) {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `deleteEntity ${kind} ${entityId} returned ${res.status}`,
+      )
+    }
+  }
 }

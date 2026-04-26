@@ -270,7 +270,7 @@ overleaf-mcp/
 - Tree event listeners maintain cache coherence (handle other clients renaming / creating / deleting docs out from under us).
 - Acceptance: agent edits a file and the change appears in the editor live, no toast. Tested against CE 5.x.
 
-### v0.3 — Tree mutations (~3 days)
+### v0.3 — Tree mutations (~3 days) — shipped
 
 - `create_doc`, `create_folder`, `upload_file`, `rename`, `move`, `delete_entity` — all REST.
 - Acceptance: full CRUD on project structure.

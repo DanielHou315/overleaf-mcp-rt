@@ -14,8 +14,9 @@ When making decisions, defer to the spec; if the spec is silent, raise it for di
 ## Status
 
 - v0.1 (read-only via REST + project-zip cache) — superseded by v0.2
-- v0.2 (OT-live reads + writes via ported Overleaf-Workshop Socket.IO client) — shipped
-- v0.3 (REST tree mutations: create/move/rename/delete) — not yet started
+- v0.2 (OT-live reads + writes via ported Overleaf-Workshop Socket.IO client) — superseded by v0.3
+- v0.3 (REST tree mutations: create_doc, create_folder, upload_file, rename, move, delete_entity) — shipped
+- v0.4 (polish: error mapping, per-doc write serialization, cookie-expiry handling, diagnose subcommand) — not yet started
 - Implementation lives at the repo root (`src/`, `test/`, `scripts/`, `package.json`, …)
 
 ## Hard constraints

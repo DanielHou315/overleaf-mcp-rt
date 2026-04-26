@@ -7,6 +7,14 @@ import type { ServerContext } from '../server.js'
 import { handleListProjects, handleGetProjectTree } from './projects.js'
 import { handleReadDoc, handleReadFile, handleWriteDoc, handleApplyPatch } from './docs.js'
 import { handleCompile, handleReadCompileLog, handleDownloadPdf } from './compile.js'
+import {
+  handleCreateDoc,
+  handleCreateFolder,
+  handleUploadFile,
+  handleRename,
+  handleMove,
+  handleDeleteEntity,
+} from './tree.js'
 import { OverleafError } from '../../errors.js'
 import type { DownloadPdfResult } from './compile.js'
 
@@ -117,6 +125,86 @@ const TOOL_DEFINITIONS = [
       required: ['projectId'],
     },
   },
+  {
+    name: 'create_doc',
+    description: 'Create a new text doc under parentPath. Optional content is OT-written after creation. Use parentPath="" for the project root.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        parentPath: { type: 'string' },
+        name: { type: 'string' },
+        content: { type: 'string' },
+      },
+      required: ['projectId', 'parentPath', 'name'],
+    },
+  },
+  {
+    name: 'create_folder',
+    description: 'Create a new folder under parentPath. Use parentPath="" for the project root.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        parentPath: { type: 'string' },
+        name: { type: 'string' },
+      },
+      required: ['projectId', 'parentPath', 'name'],
+    },
+  },
+  {
+    name: 'upload_file',
+    description: 'Upload a binary file (base64) under parentPath with the given mimeType. Overleaf may auto-promote text MIME types to docs; the response\'s kind reflects what the server stored.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        parentPath: { type: 'string' },
+        name: { type: 'string' },
+        contentBase64: { type: 'string' },
+        mimeType: { type: 'string' },
+      },
+      required: ['projectId', 'parentPath', 'name', 'contentBase64', 'mimeType'],
+    },
+  },
+  {
+    name: 'rename',
+    description: 'Rename a doc/file/folder at path to newName.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        path: { type: 'string' },
+        newName: { type: 'string' },
+      },
+      required: ['projectId', 'path', 'newName'],
+    },
+  },
+  {
+    name: 'move',
+    description: 'Move a doc/file/folder at path under newParentPath. Use newParentPath="" for the project root.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        path: { type: 'string' },
+        newParentPath: { type: 'string' },
+      },
+      required: ['projectId', 'path', 'newParentPath'],
+    },
+  },
+  {
+    name: 'delete_entity',
+    description: 'Delete the doc/file/folder at path.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        path: { type: 'string' },
+      },
+      required: ['projectId', 'path'],
+    },
+  },
 ] as const
 
 export function registerAllTools(server: Server, ctx: ServerContext) {
@@ -167,6 +255,54 @@ export function registerAllTools(server: Server, ctx: ServerContext) {
           const result = await handleDownloadPdf(ctx, args2)
           return formatPdf(result, args2.projectId)
         }
+        case 'create_doc':
+          return wrap(
+            await handleCreateDoc(
+              ctx,
+              args as { projectId: string; parentPath: string; name: string; content?: string },
+            ),
+          )
+        case 'create_folder':
+          return wrap(
+            await handleCreateFolder(
+              ctx,
+              args as { projectId: string; parentPath: string; name: string },
+            ),
+          )
+        case 'upload_file':
+          return wrap(
+            await handleUploadFile(
+              ctx,
+              args as {
+                projectId: string
+                parentPath: string
+                name: string
+                contentBase64: string
+                mimeType: string
+              },
+            ),
+          )
+        case 'rename':
+          return wrap(
+            await handleRename(
+              ctx,
+              args as { projectId: string; path: string; newName: string },
+            ),
+          )
+        case 'move':
+          return wrap(
+            await handleMove(
+              ctx,
+              args as { projectId: string; path: string; newParentPath: string },
+            ),
+          )
+        case 'delete_entity':
+          return wrap(
+            await handleDeleteEntity(
+              ctx,
+              args as { projectId: string; path: string },
+            ),
+          )
         default:
           throw new OverleafError('NOT_FOUND', `Unknown tool: ${name}`)
       }

@@ -152,6 +152,59 @@ export class OtEngine {
     return entry?.kind === 'file' ? entry.id : null
   }
 
+  /** Path → root folder id, or null before connect. */
+  get rootFolderId(): string | null {
+    const project = this.getProject()
+    return project?.rootFolder[0]?._id ?? null
+  }
+
+  /** Path → { kind, id }. Empty string returns null (use rootFolderId for the root). */
+  pathToEntity(path: string): { kind: 'doc' | 'file' | 'folder'; id: string } | null {
+    const entry = this.pathIndex.get(path)
+    if (!entry) return null
+    return { kind: entry.kind, id: entry.id }
+  }
+
+  /** Path → folder id. Empty string resolves to the root folder id. */
+  pathToFolderId(path: string): string | null {
+    if (path === '') return this.rootFolderId
+    const entry = this.pathIndex.get(path)
+    return entry?.kind === 'folder' ? entry.id : null
+  }
+
+  /**
+   * Resolve once `path` appears in the path index, or reject after timeoutMs.
+   *
+   * Tree mutations go through REST and return the new entity id immediately,
+   * but our pathIndex is updated by the recive* / removeEntity broadcast that
+   * arrives shortly after. Callers that want to operate on the new path
+   * (e.g. write_doc to a freshly-created doc) await this before proceeding.
+   *
+   * Resolves immediately if the path is already in the index. Otherwise polls
+   * every 25ms until the path appears or the timeout fires. Default timeout
+   * is 2000ms — long enough for any realistic broadcast latency, short enough
+   * to surface a real coherence problem rather than hanging.
+   */
+  async waitForPath(
+    path: string,
+    timeoutMs = 2000,
+  ): Promise<{ kind: 'doc' | 'file' | 'folder'; id: string }> {
+    const POLL_INTERVAL_MS = 25
+    const deadline = Date.now() + timeoutMs
+    while (true) {
+      const entity = this.pathToEntity(path)
+      if (entity) return entity
+      if (Date.now() >= deadline) {
+        throw new OverleafError(
+          'OVERLEAF_GENERIC',
+          `waitForPath timed out after ${timeoutMs}ms for ${path}`,
+          { path, timeoutMs },
+        )
+      }
+      await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS))
+    }
+  }
+
   /** Folder/file tree in the same shape as v0.1's ProjectTree.asTree(). */
   getTree(): TreeNode {
     const root: TreeNode = { files: [], folders: {} }
