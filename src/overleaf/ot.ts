@@ -9,7 +9,7 @@ import type {
   JoinProjectResponse,
   ProjectEntity,
 } from './ot.types.js'
-import { OverleafError, OtVersionConflictError, OtDeleteMismatchError, OtVersionDriftError } from '../errors.js'
+import { OverleafError, OtDeleteMismatchError, OtVersionDriftError } from '../errors.js'
 import { computeOps, type OtOp } from './diff.js'
 
 /** Mirrors v0.1's TreeNode shape so MCP tool outputs stay stable. */

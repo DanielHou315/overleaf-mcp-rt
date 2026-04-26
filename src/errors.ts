@@ -6,7 +6,6 @@ export type ErrorCode =
   | 'NETWORK_ERROR'
   | 'INVALID_CONFIG'
   | 'NOT_FOUND'
-  | 'OT_VERSION_CONFLICT'
   | 'OT_DELETE_MISMATCH'
   | 'OT_VERSION_DRIFT'
 
@@ -76,12 +75,6 @@ export class NotFoundError extends OverleafError {
   }
 }
 
-export class OtVersionConflictError extends OverleafError {
-  constructor(message: string, context: Record<string, unknown> = {}) {
-    super('OT_VERSION_CONFLICT', message, context)
-  }
-}
-
 export class OtDeleteMismatchError extends OverleafError {
   constructor(
     message: string,
@@ -102,7 +95,6 @@ export class OtVersionDriftError extends OverleafError {
 
 const RETRYABLE_CODES: ReadonlySet<ErrorCode> = new Set([
   'NETWORK_ERROR',
-  'OT_VERSION_CONFLICT',
   'OT_VERSION_DRIFT',
 ])
 
