@@ -152,6 +152,26 @@ export class OtEngine {
     return entry?.kind === 'file' ? entry.id : null
   }
 
+  /** Path → root folder id, or null before connect. */
+  get rootFolderId(): string | null {
+    const project = this.getProject()
+    return project?.rootFolder[0]?._id ?? null
+  }
+
+  /** Path → { kind, id }. Empty string returns null (use rootFolderId for the root). */
+  pathToEntity(path: string): { kind: 'doc' | 'file' | 'folder'; id: string } | null {
+    const entry = this.pathIndex.get(path)
+    if (!entry) return null
+    return { kind: entry.kind, id: entry.id }
+  }
+
+  /** Path → folder id. Empty string resolves to the root folder id. */
+  pathToFolderId(path: string): string | null {
+    if (path === '') return this.rootFolderId
+    const entry = this.pathIndex.get(path)
+    return entry?.kind === 'folder' ? entry.id : null
+  }
+
   /** Folder/file tree in the same shape as v0.1's ProjectTree.asTree(). */
   getTree(): TreeNode {
     const root: TreeNode = { files: [], folders: {} }
