@@ -16,6 +16,7 @@ function makeCtx(initial: string) {
           pathToDocId: () => 'docX',
           joinDoc: async () => ({ docId: 'docX', text, version }),
           writeDoc: async (_: string, newText: string) => {
+            if (newText === text) return  // mirror OtEngine.writeDoc no-op
             text = newText
             version += 1
           },
@@ -46,6 +47,16 @@ describe('write_doc summary', () => {
     expect(out.summary?.charsDelta).toBe(6)
     expect(out.summary?.versionBefore).toBe(3)
     expect(out.summary?.versionAfter).toBe(4)
+  })
+
+  it('reports zero charsDelta and unchanged version when content equals current text', async () => {
+    const harness = makeCtx('hello')
+    const out = await handleWriteDoc(harness.ctx, { projectId: 'p', path: 'a.tex', content: 'hello' })
+    expect(out.summary?.charsBefore).toBe(5)
+    expect(out.summary?.charsAfter).toBe(5)
+    expect(out.summary?.charsDelta).toBe(0)
+    expect(out.summary?.versionBefore).toBe(3)
+    expect(out.summary?.versionAfter).toBe(3)  // no bump on no-op
   })
 })
 

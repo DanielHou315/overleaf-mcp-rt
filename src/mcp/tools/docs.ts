@@ -50,7 +50,13 @@ export async function handleWriteDoc(
   const charsBefore = before.text.length
   const versionBefore = before.version
   await engine.writeDoc(docId, input.content)
-  const after = engine.getBaseline?.(docId) ?? before
+  const after = engine.getBaseline(docId)
+  if (!after) {
+    throw new OverleafError(
+      'OVERLEAF_GENERIC',
+      `getBaseline returned undefined for docId ${docId} after a successful write`,
+    )
+  }
   return {
     ok: true,
     summary: {
@@ -90,7 +96,13 @@ export async function handleApplyPatch(
   const versionBefore = before.version
 
   await engine.applyOps(docId, input.ops)
-  const after = engine.getBaseline?.(docId) ?? before
+  const after = engine.getBaseline(docId)
+  if (!after) {
+    throw new OverleafError(
+      'OVERLEAF_GENERIC',
+      `getBaseline returned undefined for docId ${docId} after a successful write`,
+    )
+  }
   return {
     ok: true,
     summary: {
