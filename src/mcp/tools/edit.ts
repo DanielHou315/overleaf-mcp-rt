@@ -32,6 +32,18 @@ export async function handleEditDoc(
     throw new OverleafError('OVERLEAF_GENERIC', 'edits must be a non-empty array')
   }
 
+  // raw_ops trusts caller-supplied positions and is not safe to interleave
+  // with anchor-based modes (whose ops are derived from baseline positions).
+  // Reject mixed calls to avoid silent corruption.
+  const hasRawOps = input.edits.some((e) => e.mode === 'raw_ops')
+  const hasAnchor = input.edits.some((e) => e.mode !== 'raw_ops')
+  if (hasRawOps && hasAnchor) {
+    throw new OverleafError(
+      'OVERLEAF_GENERIC',
+      'edit_doc cannot mix raw_ops with anchor-based modes in one call (positional safety)',
+    )
+  }
+
   const engine = await ctx.ot.get(input.projectId)
   const docId = engine.pathToDocId(input.path)
   if (docId === null) {
@@ -58,7 +70,13 @@ export async function handleEditDoc(
   }
 
   await engine.applyOps(docId, resolved)
-  const after = engine.getBaseline?.(docId) ?? baseline
+  const after = engine.getBaseline(docId)
+  if (!after) {
+    throw new OverleafError(
+      'OVERLEAF_GENERIC',
+      `getBaseline returned undefined for docId ${docId} after a successful edit_doc`,
+    )
+  }
   return {
     ok: true,
     dryRun: false,
@@ -73,13 +91,12 @@ interface ResolvedEdit {
 
 function resolveEdits(text: string, edits: EditMode[]): OtOp[] {
   const resolved: ResolvedEdit[] = edits.map((e) => resolveOne(text, e))
-  // Sort descending by startPos so applying earlier-positioned edits later
-  // doesn't shift later-positioned ones.
+  // Sort descending by startPos so we emit ops back-to-front. Each op's
+  // baseline-position is therefore still valid in the post-prior-ops doc
+  // state — prior emitted ops were at HIGHER positions, which don't shift
+  // the indices of lower positions. (Within a single resolved edit, ops are
+  // already in descending order from resolveOne.)
   resolved.sort((a, b) => b.startPos - a.startPos)
-  // But the OT op convention is: each op's p is in DOCUMENT-VERSION order
-  // (after prior ops). So we re-emit in ascending order, recomputing positions
-  // by simulating cumulative shifts.
-  resolved.sort((a, b) => a.startPos - b.startPos)
   return resolved.flatMap((r) => r.ops)
 }
 
@@ -89,17 +106,16 @@ function resolveOne(text: string, edit: EditMode): ResolvedEdit {
       const positions = findAll(text, edit.find)
       const occurrence = edit.occurrence ?? 'unique'
       const targets = pickOccurrences(positions, occurrence, edit.find)
-      // Multi-occurrence: emit a delete+insert pair per match. Sort descending
-      // so each pair operates on positions that haven't shifted yet.
+      // Emit back-to-front so each op's p is still valid in the post-prior-ops
+      // doc state: prior emitted ops were at HIGHER positions, which don't
+      // shift the indices of LOWER positions.
       const sorted = [...targets].sort((a, b) => b - a)
       const ops: OtOp[] = []
       for (const p of sorted) {
         ops.push({ p, d: edit.find })
         ops.push({ p, i: edit.replace })
       }
-      // Ascending sort for the OT-list convention
-      ops.sort((a, b) => a.p - b.p)
-      return { ops, startPos: targets[0]! }
+      return { ops, startPos: sorted[0]! }
     }
     case 'insert_before': {
       const positions = findAll(text, edit.find)

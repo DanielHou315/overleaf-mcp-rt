@@ -70,6 +70,53 @@ describe('edit_doc replace mode', () => {
       }),
     ).rejects.toThrow(/not found/)
   })
+
+  it('replaces all occurrences correctly when replacement is shorter than find', async () => {
+    const h = makeCtx('foo foo foo')
+    await handleEditDoc(h.ctx, {
+      projectId: 'p', path: 'a.tex',
+      edits: [{ mode: 'replace', find: 'foo', replace: 'X', occurrence: 'all' }],
+    })
+    expect(h.text()).toBe('X X X')
+  })
+
+  it('replaces all occurrences correctly when replacement is longer than find', async () => {
+    const h = makeCtx('a b a b')
+    await handleEditDoc(h.ctx, {
+      projectId: 'p', path: 'a.tex',
+      edits: [{ mode: 'replace', find: 'a', replace: 'AAA', occurrence: 'all' }],
+    })
+    expect(h.text()).toBe('AAA b AAA b')
+  })
+})
+
+describe('edit_doc multi-edit success', () => {
+  it('applies multiple anchor edits correctly with length-changing replacements', async () => {
+    const h = makeCtx('alpha beta gamma')
+    await handleEditDoc(h.ctx, {
+      projectId: 'p', path: 'a.tex',
+      edits: [
+        { mode: 'replace', find: 'alpha', replace: 'A' },
+        { mode: 'replace', find: 'gamma', replace: 'GGG' },
+      ],
+    })
+    expect(h.text()).toBe('A beta GGG')
+  })
+})
+
+describe('edit_doc raw_ops safety', () => {
+  it('rejects mixing raw_ops with anchor-based modes', async () => {
+    const h = makeCtx('hello world')
+    await expect(
+      handleEditDoc(h.ctx, {
+        projectId: 'p', path: 'a.tex',
+        edits: [
+          { mode: 'replace', find: 'hello', replace: 'HI' },
+          { mode: 'raw_ops', ops: [{ p: 0, i: 'X' }] },
+        ],
+      }),
+    ).rejects.toThrow(/cannot mix raw_ops/)
+  })
 })
 
 describe('edit_doc insert_before / insert_after', () => {
