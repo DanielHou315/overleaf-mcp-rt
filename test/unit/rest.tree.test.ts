@@ -163,3 +163,30 @@ describe('OverleafRest.moveEntity', () => {
     await expect(makeRest().moveEntity('p1', 'doc', 'd-x', 'np')).rejects.toThrow(/403/)
   })
 })
+
+describe('OverleafRest.deleteEntity', () => {
+  it.each([
+    ['doc', 'd-x'],
+    ['file', 'f-x'],
+    ['folder', 'fold-x'],
+  ] as const)('DELETEs /project/p1/%s/:id', async (kind, id) => {
+    let called = false
+    server.use(
+      http.delete(`https://o.example/project/p1/${kind}/${id}`, () => {
+        called = true
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    await makeRest().deleteEntity('p1', kind, id)
+    expect(called).toBe(true)
+  })
+
+  it('throws on non-OK', async () => {
+    server.use(
+      http.delete('https://o.example/project/p1/doc/d-x', () =>
+        HttpResponse.text('not found', { status: 404 }),
+      ),
+    )
+    await expect(makeRest().deleteEntity('p1', 'doc', 'd-x')).rejects.toThrow(/404/)
+  })
+})

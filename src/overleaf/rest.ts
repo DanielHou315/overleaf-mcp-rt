@@ -242,4 +242,21 @@ export class OverleafRest {
       )
     }
   }
+
+  /** Delete an entity. Workshop ref: deleteEntity. */
+  async deleteEntity(
+    projectId: string,
+    kind: 'doc' | 'file' | 'folder',
+    entityId: string,
+  ): Promise<void> {
+    const res = await this.http.delete(
+      `/project/${encodeURIComponent(projectId)}/${kind}/${encodeURIComponent(entityId)}`,
+    )
+    if (!res.ok) {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `deleteEntity ${kind} ${entityId} returned ${res.status}`,
+      )
+    }
+  }
 }
