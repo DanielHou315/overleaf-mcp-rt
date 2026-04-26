@@ -29,7 +29,7 @@ When making decisions, defer to the spec; if the spec is silent, raise it for di
 
 ## Tech stack
 
-Node.js ≥ 20, TypeScript 5, `@modelcontextprotocol/sdk`, `vitest` + `msw` for tests, `unzipper` for project-zip parsing, `node-html-parser` for CSRF/project-list scrape. Distribution via `npx`.
+Node.js ≥ 20, TypeScript 5, `@modelcontextprotocol/sdk`, `vitest` + `msw` for tests, `socket.io-client` (Overleaf 0.9 fork, patched via `patch-package`) for OT, `node-html-parser` for CSRF/project-list scrape. Distribution via `npx`.
 
 ## Repo layout
 

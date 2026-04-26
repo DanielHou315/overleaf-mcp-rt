@@ -139,7 +139,7 @@ A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `P
 | `download_pdf(projectId)` | Compile and return PDF bytes (resource) |
 | `create_doc(projectId, parentPath, name, content?)` | Create a doc; optional initial content |
 | `create_folder(projectId, parentPath, name)` | Create a folder |
-| `upload_file(projectId, parentPath, name, contentBase64, mimeType)` | Upload a binary; server may auto-promote text types to docs |
+| `upload_file(projectId, parentPath, name, contentBase64, mimeType?)` | Upload a binary; mimeType inferred from extension when omitted; server may auto-promote text types to docs |
 | `rename(projectId, path, newName)` | Rename a doc/file/folder |
 | `move(projectId, path, newParentPath)` | Move a doc/file/folder |
 | `delete_entity(projectId, path)` | Delete a doc/file/folder |
