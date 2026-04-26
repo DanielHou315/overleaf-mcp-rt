@@ -21,7 +21,7 @@ interface CredentialsFile {
   extra_headers?: Record<string, string>
 }
 
-const DEFAULT_CREDENTIALS_PATH = join(homedir(), '.config', 'overleaf-mcp', 'credentials.json')
+const DEFAULT_CREDENTIALS_PATH = join(homedir(), '.config', 'overleaf-mcp-rt', 'credentials.json')
 
 export function loadConfig(opts: LoadConfigOptions = {}): Config {
   const env = opts.env ?? process.env
@@ -43,7 +43,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
 
   if (!url) {
     throw new InvalidConfigError(
-      'OVERLEAF_URL is required (set the env var or run `overleaf-mcp login`).',
+      'OVERLEAF_URL is required (set the env var or run `overleaf-mcp-rt login`).',
     )
   }
   if (!/^https?:\/\//i.test(url)) {
@@ -63,7 +63,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
   const normalizedUrl = parsed.origin + parsed.pathname.replace(/\/+$/, '')
   if (!sessionCookie) {
     throw new InvalidConfigError(
-      'OVERLEAF_SESSION_COOKIE is required (paste from devtools or run `overleaf-mcp login`).',
+      'OVERLEAF_SESSION_COOKIE is required (paste from devtools or run `overleaf-mcp-rt login`).',
     )
   }
 

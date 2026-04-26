@@ -1,16 +1,16 @@
 {
-  "name": "overleaf-mcp",
+  "name": "overleaf-mcp-rt",
   "version": "1.0.0",
-  "description": "MCP server for self-hosted Overleaf Community Edition. Lets AI coding agents read, write, and compile LaTeX projects via Overleaf's native OT pipeline — no git-bridge or Server Pro required.",
+  "description": "Real-time MCP server for self-hosted Overleaf Community Edition. Lets AI coding agents read, write, and compile LaTeX projects via Overleaf's native operational-transform pipeline — no git-bridge or Server Pro required. The 'rt' is for real-time, distinct from git-bridge-style integrations.",
   "license": "AGPL-3.0-or-later",
   "author": "Daniel Hou (https://github.com/DanielHou315)",
-  "homepage": "https://github.com/DanielHou315/overleaf-ot-mcp#readme",
+  "homepage": "https://github.com/DanielHou315/overleaf-mcp-rt#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/DanielHou315/overleaf-ot-mcp.git"
+    "url": "git+https://github.com/DanielHou315/overleaf-mcp-rt.git"
   },
   "bugs": {
-    "url": "https://github.com/DanielHou315/overleaf-ot-mcp/issues"
+    "url": "https://github.com/DanielHou315/overleaf-mcp-rt/issues"
   },
   "keywords": [
     "mcp",
@@ -18,6 +18,8 @@
     "overleaf",
     "sharelatex",
     "latex",
+    "operational-transform",
+    "real-time",
     "claude",
     "claude-code",
     "ai",
@@ -25,7 +27,7 @@
   ],
   "type": "module",
   "bin": {
-    "overleaf-mcp": "./dist/cli.js"
+    "overleaf-mcp-rt": "./dist/cli.js"
   },
   "files": [
     "dist",

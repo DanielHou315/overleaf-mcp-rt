@@ -1,10 +1,10 @@
-# overleaf-mcp
+# overleaf-mcp-rt
 
 A [Model Context Protocol](https://modelcontextprotocol.io/) server for **Overleaf Community Edition** that lets AI coding agents (Claude Code, Claude Desktop, Codex via MCP, Cursor, …) read, navigate, and compile LaTeX projects in your self-hosted Overleaf instance — **without** git-bridge or Server Pro.
 
 **v1.0 (current):** read + write + full tree CRUD via Overleaf's REST + native OT pipeline. Edits flow as live operations from a connected collaborator — no "file changed externally" toast.
 
-Design docs (source of truth) live in the [GitHub repo](https://github.com/DanielHou315/overleaf-ot-mcp/tree/main/docs/superpowers).
+Design docs (source of truth) live in the [GitHub repo](https://github.com/DanielHou315/overleaf-mcp-rt/tree/main/docs/superpowers).
 
 ## Install
 
@@ -12,11 +12,11 @@ Two ways to use it:
 
 ```bash
 # A. Zero-install via npx (recommended for MCP clients)
-npx overleaf-mcp@latest --help
+npx overleaf-mcp-rt@latest --help
 
 # B. Global install for shell use
-npm install -g overleaf-mcp
-overleaf-mcp --help
+npm install -g overleaf-mcp-rt
+overleaf-mcp-rt --help
 ```
 
 Requires Node.js ≥ 20.
@@ -25,13 +25,13 @@ Requires Node.js ≥ 20.
 
 ```bash
 # 1. Get a session cookie (paste from devtools or use --email/--password)
-npx overleaf-mcp login --url https://overleaf.example.com
+npx overleaf-mcp-rt login --url https://overleaf.example.com
 
 # 2. Smoke test connectivity, auth, and OT handshake
-npx overleaf-mcp diagnose
+npx overleaf-mcp-rt diagnose
 
 # 3. List projects
-npx overleaf-mcp ls
+npx overleaf-mcp-rt ls
 ```
 
 ## MCP client config
@@ -41,7 +41,7 @@ npx overleaf-mcp ls
   "mcpServers": {
     "overleaf": {
       "command": "npx",
-      "args": ["-y", "overleaf-mcp@latest"],
+      "args": ["-y", "overleaf-mcp-rt@latest"],
       "env": {
         "OVERLEAF_URL": "https://overleaf.example.com",
         "OVERLEAF_SESSION_COOKIE": "overleaf_session2=s%3A..."
@@ -64,7 +64,7 @@ Generate a service token in the Zero Trust dashboard, then:
   "mcpServers": {
     "overleaf": {
       "command": "npx",
-      "args": ["-y", "overleaf-mcp@latest"],
+      "args": ["-y", "overleaf-mcp-rt@latest"],
       "env": {
         "OVERLEAF_URL": "https://overleaf.corp.example",
         "OVERLEAF_SESSION_COOKIE": "overleaf.sid=s%3A...",
@@ -101,7 +101,7 @@ These proxies typically inject `Remote-User` / `X-Forwarded-User` / `X-Forwarded
 }
 ```
 
-If your proxy expects a bearer token from a long-lived service account, send `Authorization: Bearer ...` instead. Run `overleaf-mcp diagnose` after configuring — a missing or wrong header surfaces as `OVERLEAF_AUTH_FAILED` on the REST step or `OT connectionRejected: invalid session` on the OT step.
+If your proxy expects a bearer token from a long-lived service account, send `Authorization: Bearer ...` instead. Run `overleaf-mcp-rt diagnose` after configuring — a missing or wrong header surfaces as `OVERLEAF_AUTH_FAILED` on the REST step or `OT connectionRejected: invalid session` on the OT step.
 
 ### Tailscale / VPN (no extra headers)
 
@@ -114,12 +114,12 @@ If Overleaf is reachable only via a Tailscale node or a VPN, no headers are need
 }
 ```
 
-### Sanity-check: `overleaf-mcp diagnose`
+### Sanity-check: `overleaf-mcp-rt diagnose`
 
 After wiring credentials, run from a shell:
 
 ```bash
-overleaf-mcp diagnose
+overleaf-mcp-rt diagnose
 ```
 
 Output is a step-by-step report:

@@ -1,4 +1,4 @@
-# Design: `overleaf-mcp` — an MCP server for Overleaf Community Edition without git
+# Design: `overleaf-mcp-rt` — an MCP server for Overleaf Community Edition without git
 
 **Date:** 2026-04-25
 **Status:** Draft, pending user review
@@ -17,7 +17,7 @@ The server runs as a stdio subprocess of the AI client, on the user's local mach
 3. Edits do not trigger "file changed externally" — they appear in the editor as live edits from a collaborator.
 4. Run against stock Overleaf CE without any server-side modifications.
 5. Support deployments fronted by reverse-proxy auth (Cloudflare Access, basic auth, Authelia, etc.) via configurable HTTP headers.
-6. Easy install: a single `npx overleaf-mcp` line in the AI client's MCP config.
+6. Easy install: a single `npx overleaf-mcp-rt` line in the AI client's MCP config.
 
 ## Non-goals
 
@@ -35,7 +35,7 @@ The server runs as a stdio subprocess of the AI client, on the user's local mach
          │
          │  stdio MCP transport
          ▼
-[ overleaf-mcp (Node.js, AGPL-3.0) ]
+[ overleaf-mcp-rt (Node.js, AGPL-3.0) ]
    ├── Configuration  (env vars / login subcommand / credentials file)
    ├── Auth          (cookie paste OR passport login)
    ├── HTTP client   (cookie + CSRF + user-supplied extra headers)
@@ -62,9 +62,9 @@ Stock Overleaf CE supports exactly one API auth mechanism: a session cookie (`ov
 
 ### Two supported flows
 
-**Cookie paste (default).** User logs into the CE instance in a browser, opens devtools, copies the `overleaf_session2=...` value, and configures it via env var or `overleaf-mcp login --cookie`. On first use the server fetches `GET /project` and scrapes `<meta name="ol-csrfToken">` for write operations. Works against any deployment, including SSO flows behind a reverse-proxy auth gate.
+**Cookie paste (default).** User logs into the CE instance in a browser, opens devtools, copies the `overleaf_session2=...` value, and configures it via env var or `overleaf-mcp-rt login --cookie`. On first use the server fetches `GET /project` and scrapes `<meta name="ol-csrfToken">` for write operations. Works against any deployment, including SSO flows behind a reverse-proxy auth gate.
 
-**Passport login (interactive).** `overleaf-mcp login --url <url> --email <email>` performs `GET /login` (scrapes the `_csrf` form field) → `POST /login` with `{email, password, _csrf}`. The resulting `Set-Cookie` is persisted at `~/.config/overleaf-mcp/credentials.json`. Equivalent to `olcli auth` minus the devtools paste. Does not work against deployments fronted by an SSO IdP that intercepts `/login`.
+**Passport login (interactive).** `overleaf-mcp-rt login --url <url> --email <email>` performs `GET /login` (scrapes the `_csrf` form field) → `POST /login` with `{email, password, _csrf}`. The resulting `Set-Cookie` is persisted at `~/.config/overleaf-mcp-rt/credentials.json`. Equivalent to `olcli auth` minus the devtools paste. Does not work against deployments fronted by an SSO IdP that intercepts `/login`.
 
 ### Auth pass-through headers
 
@@ -177,7 +177,7 @@ If the user types while the agent is writing, OT merges correctly upstream — t
 ```
 OVERLEAF_URL=https://overleaf.example.com
 OVERLEAF_SESSION_COOKIE="overleaf_session2=s%3A..."   # mutually exclusive with OVERLEAF_EMAIL
-OVERLEAF_EMAIL=ai-agent@local                          # used by `overleaf-mcp login` only
+OVERLEAF_EMAIL=ai-agent@local                          # used by `overleaf-mcp-rt login` only
 OVERLEAF_PASSWORD_FILE=/run/secrets/overleaf-agent-pw  # used by `login` only
 OVERLEAF_EXTRA_HEADERS={"CF-Access-Client-Id":"...","CF-Access-Client-Secret":"..."}
 OVERLEAF_DEBUG=1                                       # verbose stderr logging
@@ -185,7 +185,7 @@ OVERLEAF_DEBUG=1                                       # verbose stderr logging
 
 ### Credentials file
 
-`~/.config/overleaf-mcp/credentials.json`:
+`~/.config/overleaf-mcp-rt/credentials.json`:
 
 ```json
 {
@@ -207,7 +207,7 @@ Mode `0600`. Resolution order: env vars > credentials file > error.
   "mcpServers": {
     "overleaf": {
       "command": "npx",
-      "args": ["-y", "overleaf-mcp@latest"],
+      "args": ["-y", "overleaf-mcp-rt@latest"],
       "env": {
         "OVERLEAF_URL": "https://overleaf.example.com",
         "OVERLEAF_SESSION_COOKIE": "overleaf_session2=s%3A...",
@@ -222,15 +222,15 @@ Mode `0600`. Resolution order: env vars > credentials file > error.
 
 | Command | Purpose |
 |---|---|
-| `overleaf-mcp` | Default: run as MCP stdio server, picking up env vars / credentials file |
-| `overleaf-mcp login` | Interactive: passport flow OR cookie paste; persists to credentials file |
-| `overleaf-mcp ls` | Smoke-test: list accessible projects |
-| `overleaf-mcp diagnose` | Connectivity check: TLS, CF Access headers, cookie validity, OT handshake |
+| `overleaf-mcp-rt` | Default: run as MCP stdio server, picking up env vars / credentials file |
+| `overleaf-mcp-rt login` | Interactive: passport flow OR cookie paste; persists to credentials file |
+| `overleaf-mcp-rt ls` | Smoke-test: list accessible projects |
+| `overleaf-mcp-rt diagnose` | Connectivity check: TLS, CF Access headers, cookie validity, OT handshake |
 
 ## Module structure
 
 ```
-overleaf-mcp/
+overleaf-mcp-rt/
 ├── package.json                (AGPL-3.0)
 ├── README.md                   (config examples for CF Access, basic auth, Tailscale)
 ├── src/
@@ -284,7 +284,7 @@ overleaf-mcp/
 
 ### v1.0 — release — shipped
 
-Published to npm under AGPL-3.0 with attribution to Overleaf-Workshop. Install via `npm install -g overleaf-mcp` or wire into MCP clients with `npx -y overleaf-mcp@latest`.
+Published to npm under AGPL-3.0 with attribution to Overleaf-Workshop. Install via `npm install -g overleaf-mcp-rt` or wire into MCP clients with `npx -y overleaf-mcp-rt@latest`.
 
 ### Deferred
 

@@ -11,7 +11,7 @@ const PASSWORD = process.env.TEST_OVERLEAF_PASSWORD ?? 'password'
 
 const skip = process.env.RUN_INTEGRATION !== '1'
 
-describe.skipIf(skip)('overleaf-mcp against live CE', () => {
+describe.skipIf(skip)('overleaf-mcp-rt against live CE', () => {
   it('lists projects + compiles via REST', async () => {
     const id = await passportLogin({ url: URL, email: EMAIL, password: PASSWORD, extraHeaders: {} })
     const http = new OverleafHttp({ url: URL, sessionCookie: id.sessionCookie, csrfToken: id.csrfToken, extraHeaders: {} })
@@ -44,7 +44,7 @@ describe.skipIf(skip)('overleaf-mcp against live CE', () => {
     expect(docId, 'project must contain main.tex at root').not.toBeNull()
     const before = (await engine.joinDoc(docId!)).text
 
-    const marker = `% overleaf-mcp v0.2 OT smoke @ ${new Date().toISOString()}\n`
+    const marker = `% overleaf-mcp-rt OT smoke @ ${new Date().toISOString()}\n`
     const after = before.startsWith('% overleaf-mcp')
       ? before.replace(/^% overleaf-mcp.*\n/, marker)
       : marker + before

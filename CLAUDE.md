@@ -1,4 +1,4 @@
-# overleaf-ot-mcp
+# overleaf-mcp-rt
 
 A Model Context Protocol (MCP) server that connects AI coding agents (Claude Code, Claude Desktop, Codex, Cursor, …) to a self-hosted **Overleaf Community Edition** instance — without a git-bridge intermediary.
 

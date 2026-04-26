@@ -2,6 +2,7 @@
 import { writeFileSync, mkdirSync, chmodSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { createInterface } from 'node:readline/promises'
 import { stdin as input, stdout as output, stderr } from 'node:process'
 import { loadConfig } from './config.js'
@@ -14,18 +15,18 @@ import { OverleafSocket } from './overleaf/socket.js'
 import { OtEngine } from './overleaf/ot.js'
 
 const HELP = `
-overleaf-mcp — MCP server for Overleaf Community Edition (v1.0)
+overleaf-mcp-rt — MCP server for Overleaf Community Edition (v1.0)
 
 Usage:
-  overleaf-mcp                Run as MCP stdio server (default).
-  overleaf-mcp login          Interactive: paste a cookie or log in with email + password.
-  overleaf-mcp ls             List accessible projects (smoke test).
-  overleaf-mcp diagnose       Verify connectivity, auth, and (eventually) OT handshake.
-  overleaf-mcp --help         Show this help.
+  overleaf-mcp-rt                Run as MCP stdio server (default).
+  overleaf-mcp-rt login          Interactive: paste a cookie or log in with email + password.
+  overleaf-mcp-rt ls             List accessible projects (smoke test).
+  overleaf-mcp-rt diagnose       Verify connectivity, auth, and (eventually) OT handshake.
+  overleaf-mcp-rt --help         Show this help.
 
 Environment variables:
   OVERLEAF_URL                Required. e.g. https://overleaf.example.com
-  OVERLEAF_SESSION_COOKIE     Required (or run \`overleaf-mcp login\`).
+  OVERLEAF_SESSION_COOKIE     Required (or run \`overleaf-mcp-rt login\`).
   OVERLEAF_EXTRA_HEADERS      JSON object of extra headers (e.g. CF Access service token).
   OVERLEAF_DEBUG              "1" for verbose stderr logging.
 `
@@ -264,7 +265,7 @@ async function runLogin(argv: string[]) {
   await validateCookie({ url, sessionCookie, extraHeaders })
   stderr.write(`✓ Cookie valid; CSRF token scraped\n`)
 
-  const target = join(homedir(), '.config', 'overleaf-mcp', 'credentials.json')
+  const target = join(homedir(), '.config', 'overleaf-mcp-rt', 'credentials.json')
   mkdirSync(dirname(target), { recursive: true })
   writeFileSync(
     target,
@@ -275,11 +276,16 @@ async function runLogin(argv: string[]) {
   rl.close()
 }
 
-main().catch((err: unknown) => {
-  if (err instanceof OverleafError) {
-    stderr.write(`error: ${err.code}: ${err.message}\n`)
-    process.exit(2)
-  }
-  stderr.write(`error: ${String((err as Error).message ?? err)}\n`)
-  process.exit(1)
-})
+const invokedAsScript = process.argv[1] !== undefined
+  && import.meta.url === pathToFileURL(process.argv[1]).href
+
+if (invokedAsScript) {
+  main().catch((err: unknown) => {
+    if (err instanceof OverleafError) {
+      stderr.write(`error: ${err.code}: ${err.message}\n`)
+      process.exit(2)
+    }
+    stderr.write(`error: ${String((err as Error).message ?? err)}\n`)
+    process.exit(1)
+  })
+}

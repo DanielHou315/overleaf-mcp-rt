@@ -9,7 +9,7 @@ describe('loadConfig', () => {
   let tmp: string
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'overleaf-mcp-test-'))
+    tmp = mkdtempSync(join(tmpdir(), 'overleaf-mcp-rt-test-'))
   })
 
   afterEach(() => {
