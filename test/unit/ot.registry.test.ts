@@ -64,6 +64,21 @@ describe('OtEngineRegistry', () => {
     expect(createdSocks).toBe(1)
   })
 
+  it('disconnects engine and rejects when connect() fails', async () => {
+    const socks: FakeSocket[] = []
+    const factory: OtEngineFactory = (projectId) => {
+      const sock = new FakeSocket()
+      socks.push(sock)
+      queueMicrotask(() => {
+        sock.simulate('connectionRejected', { message: 'access denied for ' + projectId })
+      })
+      return { socket: sock }
+    }
+    const reg = new OtEngineRegistry(factory)
+    await expect(reg.get('p1')).rejects.toThrow(/access denied/)
+    expect(socks[0]!.disconnected).toBe(true) // engine.disconnect() was called
+  })
+
   it('closeAll() disconnects every engine', async () => {
     const socks: FakeSocket[] = []
     const factory: OtEngineFactory = (projectId) => {

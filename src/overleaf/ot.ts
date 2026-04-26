@@ -1,3 +1,6 @@
+// Portions of this file are ported from Overleaf-Workshop
+// (https://github.com/iamhyc/Overleaf-Workshop), specifically
+// src/api/socketio.ts. Used under AGPL-3.0-or-later.
 import type { SocketLike } from './socket.js'
 import type {
   DocEntity,
@@ -6,7 +9,7 @@ import type {
   JoinProjectResponse,
   ProjectEntity,
 } from './ot.types.js'
-import { OverleafError, OtVersionConflictError } from '../errors.js'
+import { NetworkError, OverleafError, OtVersionConflictError } from '../errors.js'
 import { computeOps, type OtOp } from './diff.js'
 
 /** Mirrors v0.1's TreeNode shape so MCP tool outputs stay stable. */
@@ -66,7 +69,7 @@ export class OtEngine {
   private baselines = new Map<string, DocBaseline>()
   private inflightJoinDoc = new Map<string, Promise<DocBaseline>>()
   /** Pending writes awaiting their otUpdateApplied echo. */
-  private pendingEchoes = new Map<string, Array<() => void>>()
+  private pendingEchoes = new Map<string, Array<{ resolve: () => void; reject: (err: unknown) => void }>>()
   private otUpdateAppliedHandlerInstalled = false
 
   constructor(opts: OtEngineOptions) {
@@ -122,10 +125,14 @@ export class OtEngine {
       this.installListener('joinProjectResponse', onJoinResponse as (...args: unknown[]) => void)
       this.installListener('connectionRejected', onConnRejected as (...args: unknown[]) => void)
 
-      const onForceDisconnect = (..._args: unknown[]): void => {
+      const onDisconnect = (..._args: unknown[]): void => {
+        // Don't trigger reconnect during graceful shutdown — disconnect() removes
+        // listeners before calling socket.disconnect(), so the handler won't fire
+        // for our own teardown.
         this.scheduleReconnect()
       }
-      this.installListener('forceDisconnect', onForceDisconnect)
+      this.installListener('forceDisconnect', onDisconnect)
+      this.installListener('disconnect', onDisconnect)
 
       // v2 mode is server-driven (the URL's projectId query causes CE to push
       // joinProjectResponse autonomously), but Workshop emits defensively in
@@ -237,10 +244,10 @@ export class OtEngine {
     const update = { doc: docId, op: ops, v: baseline.version }
 
     // Wait for both the ack AND the otUpdateApplied echo for our publicId.
-    const echoPromise = new Promise<void>((resolve) => {
+    const echoPromise = new Promise<void>((resolve, reject) => {
       let arr = this.pendingEchoes.get(docId)
       if (!arr) this.pendingEchoes.set(docId, arr = [])
-      arr.push(resolve)
+      arr.push({ resolve, reject })
     })
 
     try {
@@ -284,7 +291,15 @@ export class OtEngine {
   private cancelPendingEcho(docId: string): void {
     const arr = this.pendingEchoes.get(docId)
     if (!arr || arr.length === 0) return
-    arr.shift() // resolve nothing — the awaiting promise will be GC'd by the throw path
+    const { resolve } = arr.shift()!
+    resolve()
+  }
+
+  private rejectAllPendingEchoes(err: unknown): void {
+    for (const arr of this.pendingEchoes.values()) {
+      for (const { reject } of arr) reject(err)
+    }
+    this.pendingEchoes.clear()
   }
 
   // ---- internals ----
@@ -300,8 +315,8 @@ export class OtEngine {
       if (update.meta?.source !== this._publicId) return
       const arr = this.pendingEchoes.get(update.doc)
       if (!arr || arr.length === 0) return
-      const resolver = arr.shift()!
-      resolver()
+      const { resolve } = arr.shift()!
+      resolve()
     })
   }
 
@@ -397,7 +412,7 @@ export class OtEngine {
     this._isConnected = false
     this.baselines.clear()
     this.inflightJoinDoc.clear()
-    this.pendingEchoes.clear()
+    this.rejectAllPendingEchoes(new NetworkError('OT engine reconnecting; retry the write'))
     for (const { event, handler } of this.installedHandlers) {
       this.currentSocket.off(event, handler)
     }
@@ -508,6 +523,9 @@ export class OtEngineRegistry {
         await engine.connect()
         this.engines.set(projectId, engine)
         return engine
+      } catch (err) {
+        try { engine.disconnect() } catch { /* socket may already be torn down */ }
+        throw err
       } finally {
         this.inflight.delete(projectId)
       }
