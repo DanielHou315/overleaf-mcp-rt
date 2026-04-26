@@ -35,6 +35,13 @@ export async function handleReadDocRange(
   const totalLines = lines.length
   const totalChars = text.length
 
+  if (input.startOffset !== undefined && input.startLine !== undefined) {
+    throw new OverleafError(
+      'OVERLEAF_GENERIC',
+      'read_doc_range accepts startLine OR startOffset, not both',
+    )
+  }
+
   if (input.startOffset !== undefined) {
     const start = Math.max(0, input.startOffset)
     const len = input.length ?? totalChars - start
@@ -51,6 +58,12 @@ export async function handleReadDocRange(
   if (input.startLine !== undefined) {
     const start = Math.max(1, input.startLine)
     const end = Math.min(totalLines, input.endLine ?? start)
+    if (input.endLine !== undefined && input.endLine < input.startLine) {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `read_doc_range: endLine (${input.endLine}) is before startLine (${input.startLine})`,
+      )
+    }
     // 1-indexed inclusive; lines[start-1..end-1] joined by \n
     const slice = lines.slice(start - 1, end).join('\n')
     return {

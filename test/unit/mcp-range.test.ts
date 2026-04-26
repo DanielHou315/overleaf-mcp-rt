@@ -57,4 +57,20 @@ describe('read_doc_range', () => {
       handleReadDocRange(makeCtx(text), { projectId: 'p', path: 'a.tex' } as never),
     ).rejects.toThrow(/startLine.*startOffset/)
   })
+
+  it('rejects when both startLine and startOffset are provided', async () => {
+    await expect(
+      handleReadDocRange(makeCtx(text), {
+        projectId: 'p', path: 'a.tex', startLine: 1, startOffset: 0,
+      }),
+    ).rejects.toThrow(/not both/)
+  })
+
+  it('rejects when endLine < startLine', async () => {
+    await expect(
+      handleReadDocRange(makeCtx(text), {
+        projectId: 'p', path: 'a.tex', startLine: 5, endLine: 2,
+      }),
+    ).rejects.toThrow(/before startLine/)
+  })
 })
