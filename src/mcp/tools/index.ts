@@ -6,6 +6,8 @@ import {
 import type { ServerContext } from '../server.js'
 import { handleListProjects, handleGetProjectTree } from './projects.js'
 import { handleReadDoc, handleReadFile, handleWriteDoc, handleApplyPatch } from './docs.js'
+import { handleEditDoc } from './edit.js'
+import { handleReadDocRange } from './range.js'
 import { handleCompile, handleReadCompileLog, handleDownloadPdf } from './compile.js'
 import {
   handleCreateDoc,
@@ -47,20 +49,37 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'read_file',
-    description: 'Read a binary file by path within a project. Returns native MCP image content for image MIMEs, text content for text MIMEs, resource for PDFs, and a {contentBase64,mimeType} envelope for other binary types.',
+    name: 'read_doc_range',
+    description: 'Read a substring of a text doc by line range (startLine/endLine, 1-indexed inclusive) or by offset/length. Returns totalLines and totalChars for context.',
     inputSchema: {
       type: 'object',
       properties: {
         projectId: { type: 'string' },
         path: { type: 'string' },
+        startLine: { type: 'integer', minimum: 1 },
+        endLine: { type: 'integer', minimum: 1 },
+        startOffset: { type: 'integer', minimum: 0 },
+        length: { type: 'integer', minimum: 0 },
+      },
+      required: ['projectId', 'path'],
+    },
+  },
+  {
+    name: 'read_file',
+    description: 'Read a binary file by path within a project. Default (as=auto): returns native MCP image content for image MIMEs, text content for text MIMEs, resource for PDFs, and a {contentBase64,mimeType} envelope for other binary types. Pass as="base64" to force the {contentBase64,mimeType} envelope for all types — useful when you need programmatic access to the bytes (e.g. to copy a binary between paths via upload_file).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        path: { type: 'string' },
+        as: { type: 'string', enum: ['auto', 'base64'] },
       },
       required: ['projectId', 'path'],
     },
   },
   {
     name: 'write_doc',
-    description: 'Replace a text doc by path within a project. Edits flow as live OT ops; no "file changed externally" toast.',
+    description: 'Replace a text doc by path. Edits flow as live OT ops; collaborators see fine-grained changes, not a "file changed externally" toast. Returns a summary {versionBefore, versionAfter, charsBefore, charsAfter, charsDelta, opsApplied}. For surgical edits prefer edit_doc.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -73,7 +92,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'apply_patch',
-    description: 'Advanced: emit raw OT ops [{p,i?,d?}] against a doc at its current version. Each op must have exactly one of `i` (insert) or `d` (delete). For most use cases prefer write_doc.',
+    description: 'Advanced: emit raw OT ops [{p,i?,d?}] against a doc. Each op must have exactly one of `i` (insert) or `d` (delete); a `d`-string that does not match the doc at p surfaces as OT_DELETE_MISMATCH. For most use cases prefer edit_doc, which resolves anchors → OT positions for you. apply_patch is here for callers that already have positions computed.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -93,6 +112,97 @@ const TOOL_DEFINITIONS = [
         },
       },
       required: ['projectId', 'path', 'ops'],
+    },
+  },
+  {
+    name: 'edit_doc',
+    description: 'High-level text edits with anchor-based find/replace, insert before/after, line-range replace, or raw OT ops. All edits in one call apply atomically (all or none). Pass dryRun=true to preview without applying. For most edits prefer this over apply_patch — the server resolves anchors → OT positions for you.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        path: { type: 'string' },
+        edits: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  mode: { const: 'replace' },
+                  find: { type: 'string' },
+                  replace: { type: 'string' },
+                  occurrence: {
+                    oneOf: [
+                      { type: 'string', enum: ['unique', 'first', 'all'] },
+                      { type: 'integer', minimum: 0 },
+                    ],
+                  },
+                },
+                required: ['mode', 'find', 'replace'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  mode: { const: 'insert_before' },
+                  find: { type: 'string' },
+                  text: { type: 'string' },
+                },
+                required: ['mode', 'find', 'text'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  mode: { const: 'insert_after' },
+                  find: { type: 'string' },
+                  text: { type: 'string' },
+                },
+                required: ['mode', 'find', 'text'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  mode: { const: 'replace_lines' },
+                  startLine: { type: 'integer', minimum: 1 },
+                  endLine: { type: 'integer', minimum: 1 },
+                  text: { type: 'string' },
+                },
+                required: ['mode', 'startLine', 'endLine', 'text'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  mode: { const: 'raw_ops' },
+                  ops: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        p: { type: 'integer', minimum: 0 },
+                        i: { type: 'string' },
+                        d: { type: 'string' },
+                      },
+                      required: ['p'],
+                    },
+                  },
+                },
+                required: ['mode', 'ops'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  mode: { const: 'unified_diff' },
+                  diff: { type: 'string' },
+                },
+                required: ['mode', 'diff'],
+              },
+            ],
+          },
+        },
+        dryRun: { type: 'boolean' },
+      },
+      required: ['projectId', 'path', 'edits'],
     },
   },
   {
@@ -223,10 +333,17 @@ export function registerAllTools(server: Server, ctx: ServerContext) {
           return wrap(await handleGetProjectTree(ctx, args as { projectId: string }))
         case 'read_doc':
           return wrap(await handleReadDoc(ctx, args as { projectId: string; path: string }))
+        case 'read_doc_range':
+          return wrap(
+            await handleReadDocRange(
+              ctx,
+              args as { projectId: string; path: string; startLine?: number; endLine?: number; startOffset?: number; length?: number },
+            ),
+          )
         case 'read_file': {
-          const args2 = args as { projectId: string; path: string }
+          const args2 = args as { projectId: string; path: string; as?: 'auto' | 'base64' }
           const result = await handleReadFile(ctx, args2)
-          return formatBinaryFile(result, args2.projectId, args2.path)
+          return formatBinaryFile(result, args2.projectId, args2.path, args2.as ?? 'auto')
         }
         case 'write_doc':
           return wrap(
@@ -240,6 +357,13 @@ export function registerAllTools(server: Server, ctx: ServerContext) {
             await handleApplyPatch(
               ctx,
               args as { projectId: string; path: string; ops: Array<{ p: number; i?: string; d?: string }> },
+            ),
+          )
+        case 'edit_doc':
+          return wrap(
+            await handleEditDoc(
+              ctx,
+              args as unknown as Parameters<typeof handleEditDoc>[1],
             ),
           )
         case 'compile':
@@ -310,7 +434,7 @@ export function registerAllTools(server: Server, ctx: ServerContext) {
     } catch (err) {
       if (err instanceof OverleafError) {
         return {
-          content: [{ type: 'text', text: `${err.code}: ${err.message}` }],
+          content: [{ type: 'text', text: JSON.stringify(err.toEnvelope(), null, 2) }],
           isError: true,
         }
       }
@@ -329,9 +453,13 @@ export function formatBinaryFile(
   result: { bytes: Buffer; contentType: string },
   projectId: string,
   path: string,
+  as: 'auto' | 'base64' = 'auto',
 ): { content: Array<unknown> } {
   const base64 = result.bytes.toString('base64')
   const ct = effectiveMime(result.contentType, path)
+  if (as === 'base64') {
+    return wrap({ contentBase64: base64, mimeType: ct })
+  }
   if (ct.startsWith('image/')) {
     return { content: [{ type: 'image', data: base64, mimeType: ct }] }
   }

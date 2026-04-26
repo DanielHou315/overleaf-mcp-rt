@@ -163,9 +163,11 @@ A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `P
 | `list_projects` | List accessible projects |
 | `get_project_tree(projectId)` | Folder + file tree (live, OT-backed) |
 | `read_doc(projectId, path)` | Text doc content (live, OT-backed) |
-| `read_file(projectId, path)` | Binary file (image / PDF / text / base64 by MIME) |
-| `write_doc(projectId, path, content)` | Replace a text doc; flows as OT ops, no toast |
-| `apply_patch(projectId, path, ops[])` | Advanced: emit raw `[{p,i?,d?}]` OT ops |
+| `read_doc_range(projectId, path, startLine?, endLine?, startOffset?, length?)` | Substring of a doc by line range (1-indexed inclusive) or offset/length. Returns `totalLines`/`totalChars` so agents can paginate without a full read. |
+| `read_file(projectId, path, as?)` | Binary file. Default `as=auto`: native MCP image content for image MIMEs, text for text MIMEs, resource for PDFs, base64 envelope otherwise. Pass `as=base64` to force the `{contentBase64, mimeType}` envelope for any type — useful for programmatic copy via `upload_file`. |
+| `edit_doc(projectId, path, edits[], dryRun?)` | **Recommended for most edits.** High-level text edits with anchor-based find/replace, insert before/after, line-range replace, raw OT ops, or unified-diff. All edits in one call apply atomically (all or none). Pass `dryRun=true` to preview the resolved OT ops without applying. |
+| `write_doc(projectId, path, content)` | Replace a text doc; flows as OT ops, no toast. Returns a summary `{versionBefore, versionAfter, charsBefore, charsAfter, charsDelta, opsApplied}`. |
+| `apply_patch(projectId, path, ops[])` | Advanced: emit raw `[{p,i?,d?}]` OT ops. Mismatched `d`-strings throw `OT_DELETE_MISMATCH`. Prefer `edit_doc` unless you already have positions computed. |
 | `compile(projectId, draft?, stopOnFirstError?)` | Trigger compile, return URLs |
 | `read_compile_log(projectId)` | Compile and return log text |
 | `download_pdf(projectId)` | Compile and return PDF bytes (resource) |
@@ -175,6 +177,20 @@ A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `P
 | `rename(projectId, path, newName)` | Rename a doc/file/folder |
 | `move(projectId, path, newParentPath)` | Move a doc/file/folder |
 | `delete_entity(projectId, path)` | Delete a doc/file/folder |
+
+## v1.1 release notes
+
+v1.1 adds the agent-ergonomics surface that the v1.0 raw `apply_patch` made painful to use:
+
+- **`edit_doc` tool** — anchor-based `replace` (with `unique`/`first`/`all`/Nth occurrence semantics), `insert_before` / `insert_after`, line-range `replace_lines`, `unified_diff` (LLMs emit this format fluently), and `raw_ops` as an escape hatch. All edits in one call resolve against the same baseline and apply atomically; `dryRun: true` returns the resolved OT ops without emitting them.
+- **`read_doc_range`** — fetch a substring of a doc by line range or offset/length, with `totalLines` / `totalChars` returned alongside. Saves an agent the round-trip cost of fetching a 50 KB doc just to verify a 200-byte edit.
+- **`read_file as=base64`** — opt into a `{contentBase64, mimeType}` envelope even for image MIMEs, so an agent can copy a binary asset between two project paths via `upload_file` without losing access to the bytes.
+- **Edit summaries** — `write_doc`, `apply_patch`, and `edit_doc` all return `{versionBefore, versionAfter, charsBefore, charsAfter, charsDelta, opsApplied}`. Agents can sanity-check edits without re-reading the doc.
+- **Structured error envelope** — tool errors serialize as `{code, message, context, retryable, hint?}` JSON instead of a flat string. New error codes: `OT_DELETE_MISMATCH` (a delete `d`-string didn't match the doc at `p`) and `OT_VERSION_DRIFT` (the doc moved under us during a write retry). The `retryable` flag drives retry loops; `hint` provides a one-line next step for the most common failures.
+- **Wire-format change for errors:** error tool responses now serialize as the structured JSON envelope inside `text` content; v1.0 emitted `${code}: ${message}` plain text. If you have a v1.0 client that regex-parses error strings, it will need to switch to JSON parsing — most agents already round-trip via JSON anyway.
+- **Defensive validation** — `apply_patch` and `edit_doc` pre-validate ops against the local baseline before emit, so a wrong offset surfaces immediately instead of via an opaque server reject (or, worse, silent no-op).
+
+The `apply_patch` and `write_doc` tools remain available; their descriptions now point at `edit_doc` as the recommended high-level surface.
 
 ## v1.0 release notes
 
