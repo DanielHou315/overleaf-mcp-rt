@@ -1,3 +1,4 @@
+import { applyPatch as applyUnifiedDiff } from 'diff'
 import type { ServerContext } from '../server.js'
 import { NotFoundError, OverleafError } from '../../errors.js'
 import type { OtOp } from '../../overleaf/diff.js'
@@ -9,6 +10,7 @@ export type EditMode =
   | { mode: 'insert_after'; find: string; text: string }
   | { mode: 'replace_lines'; startLine: number; endLine: number; text: string }
   | { mode: 'raw_ops'; ops: OtOp[] }
+  | { mode: 'unified_diff'; diff: string }
 
 export interface EditDocInput {
   projectId: string
@@ -154,6 +156,26 @@ function resolveOne(text: string, edit: EditMode): ResolvedEdit {
       return {
         ops: edit.ops,
         startPos: edit.ops[0]?.p ?? 0,
+      }
+    }
+    case 'unified_diff': {
+      const result = applyUnifiedDiff(text, edit.diff)
+      if (result === false || typeof result !== 'string') {
+        throw new OverleafError(
+          'OVERLEAF_GENERIC',
+          'unified diff did not apply: context lines did not match the doc',
+        )
+      }
+      // Reduce to the smallest set of OT ops by computing a single
+      // delete-everything + insert-new (cheap, server validates atomically).
+      // For better minimality we could call computeOps from src/overleaf/diff.ts,
+      // but a single replace is correct and simpler.
+      return {
+        ops: [
+          { p: 0, d: text },
+          { p: 0, i: result },
+        ],
+        startPos: 0,
       }
     }
   }

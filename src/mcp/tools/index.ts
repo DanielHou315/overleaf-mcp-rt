@@ -189,6 +189,14 @@ const TOOL_DEFINITIONS = [
                 },
                 required: ['mode', 'ops'],
               },
+              {
+                type: 'object',
+                properties: {
+                  mode: { const: 'unified_diff' },
+                  diff: { type: 'string' },
+                },
+                required: ['mode', 'diff'],
+              },
             ],
           },
         },
