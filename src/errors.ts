@@ -8,6 +8,7 @@ export type ErrorCode =
   | 'NOT_FOUND'
   | 'OT_VERSION_CONFLICT'
   | 'OT_DELETE_MISMATCH'
+  | 'OT_VERSION_DRIFT'
 
 export class OverleafError extends Error {
   readonly code: ErrorCode
@@ -69,5 +70,14 @@ export class OtDeleteMismatchError extends OverleafError {
     context: { p: number; expected: string; actual: string; opIndex: number },
   ) {
     super('OT_DELETE_MISMATCH', message, context)
+  }
+}
+
+export class OtVersionDriftError extends OverleafError {
+  constructor(
+    message: string,
+    context: { docId: string; expected: number; actual: number },
+  ) {
+    super('OT_VERSION_DRIFT', message, context)
   }
 }

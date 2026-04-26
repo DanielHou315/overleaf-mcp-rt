@@ -9,7 +9,7 @@ import type {
   JoinProjectResponse,
   ProjectEntity,
 } from './ot.types.js'
-import { OverleafError, OtVersionConflictError, OtDeleteMismatchError } from '../errors.js'
+import { OverleafError, OtVersionConflictError, OtDeleteMismatchError, OtVersionDriftError } from '../errors.js'
 import { computeOps, type OtOp } from './diff.js'
 
 /** Mirrors v0.1's TreeNode shape so MCP tool outputs stay stable. */
@@ -352,9 +352,14 @@ export class OtEngine {
         return this.applyOpsWithResync(docId, recomputedOps, attemptsLeft - 1)
       }
       if (isVersionMismatch(err)) {
-        throw new OtVersionConflictError(
-          `Doc ${docId} kept conflicting after resync`,
-          { docId, baselineVersion: baseline.version },
+        const fresh = this.getBaseline(docId)
+        throw new OtVersionDriftError(
+          `Doc ${docId} kept drifting after resync`,
+          {
+            docId,
+            expected: baseline.version,
+            actual: fresh?.version ?? -1,
+          },
         )
       }
       throw err instanceof Error ? err : new OverleafError('OVERLEAF_GENERIC', String(err))

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { OtEngine } from '../../src/overleaf/ot.js'
-import { OtVersionConflictError } from '../../src/errors.js'
+import { OtVersionDriftError } from '../../src/errors.js'
 import { FakeSocket } from './fake-socket.js'
 import type { JoinProjectResponse } from '../../src/overleaf/ot.types.js'
 
@@ -62,13 +62,13 @@ describe('OtEngine resync on version conflict', () => {
     expect(engine.readDoc('d1')).toBe('hello! world')
   })
 
-  it('throws OtVersionConflictError when the second attempt also fails', async () => {
+  it('throws OtVersionDriftError when the second attempt also fails', async () => {
     const { sock, engine } = await ready()
     sock.respondToEmit('joinDoc', () => [null, ['hello'], 4, []])
     await engine.joinDoc('d1')
 
     sock.respondToEmit('applyOtUpdate', () => [{ message: 'still conflicting' }])
 
-    await expect(engine.writeDoc('d1', 'hello world')).rejects.toBeInstanceOf(OtVersionConflictError)
+    await expect(engine.writeDoc('d1', 'hello world')).rejects.toBeInstanceOf(OtVersionDriftError)
   })
 })
