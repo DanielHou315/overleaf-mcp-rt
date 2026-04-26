@@ -3,6 +3,7 @@ import { setupServer } from 'msw/node'
 import { http, HttpResponse } from 'msw'
 import { OverleafHttp } from '../../src/overleaf/http.js'
 import { OverleafRest } from '../../src/overleaf/rest.js'
+import { ProjectAccessDeniedError } from '../../src/errors.js'
 
 const server = setupServer()
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
@@ -34,13 +35,13 @@ describe('OverleafRest.createDoc', () => {
     expect(out).toEqual({ id: 'd-new' })
   })
 
-  it('throws OverleafError on non-OK response', async () => {
+  it('throws ProjectAccessDeniedError on non-OK 403 response', async () => {
     server.use(
       http.post('https://o.example/project/p1/doc', () =>
         HttpResponse.text('forbidden', { status: 403 }),
       ),
     )
-    await expect(makeRest().createDoc('p1', 'root', 'x.tex')).rejects.toThrow(/403/)
+    await expect(makeRest().createDoc('p1', 'root', 'x.tex')).rejects.toBeInstanceOf(ProjectAccessDeniedError)
   })
 })
 
@@ -154,13 +155,13 @@ describe('OverleafRest.moveEntity', () => {
     expect(bodyJson).toEqual({ folder_id: 'new-parent' })
   })
 
-  it('throws on non-OK', async () => {
+  it('throws ProjectAccessDeniedError on non-OK 403', async () => {
     server.use(
       http.post('https://o.example/project/p1/doc/d-x/move', () =>
         HttpResponse.text('forbidden', { status: 403 }),
       ),
     )
-    await expect(makeRest().moveEntity('p1', 'doc', 'd-x', 'np')).rejects.toThrow(/403/)
+    await expect(makeRest().moveEntity('p1', 'doc', 'd-x', 'np')).rejects.toBeInstanceOf(ProjectAccessDeniedError)
   })
 })
 

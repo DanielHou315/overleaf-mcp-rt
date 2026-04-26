@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
 import { setupServer } from 'msw/node'
 import { http, HttpResponse } from 'msw'
 import { OverleafHttp } from '../../src/overleaf/http.js'
-import { AuthFailedError, ProxyAuthFailedError, NetworkError } from '../../src/errors.js'
+import { AuthFailedError, ProxyAuthFailedError, NetworkError, ProjectAccessDeniedError } from '../../src/errors.js'
 
 const server = setupServer()
 
@@ -93,5 +93,35 @@ describe('OverleafHttp', () => {
       http.get('https://overleaf.example.com/p', () => HttpResponse.error()),
     )
     await expect(makeClient().get('/p')).rejects.toBeInstanceOf(NetworkError)
+  })
+
+  it('throws ProjectAccessDeniedError on 403 from /project/:id/* without CF headers', async () => {
+    server.use(
+      http.get('https://overleaf.example.com/project/p1/file/f1', () =>
+        HttpResponse.text('forbidden', { status: 403 }),
+      ),
+    )
+    await expect(makeClient().get('/project/p1/file/f1')).rejects.toMatchObject({
+      code: 'PROJECT_ACCESS_DENIED',
+      context: { projectId: 'p1' },
+    })
+  })
+
+  it('still throws ProxyAuthFailedError on 403 with cf-ray (CF wins over project-403)', async () => {
+    server.use(
+      http.get('https://overleaf.example.com/project/p1/file/f1', () =>
+        HttpResponse.text('blocked', { status: 403, headers: { 'Cf-Ray': 'abc' } }),
+      ),
+    )
+    await expect(makeClient().get('/project/p1/file/f1')).rejects.toBeInstanceOf(ProxyAuthFailedError)
+  })
+
+  it('throws AuthFailedError on 401 regardless of path', async () => {
+    server.use(
+      http.get('https://overleaf.example.com/project/p1/compile', () =>
+        HttpResponse.text('Unauthorized', { status: 401 }),
+      ),
+    )
+    await expect(makeClient().get('/project/p1/compile')).rejects.toBeInstanceOf(AuthFailedError)
   })
 })
