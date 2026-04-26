@@ -6,6 +6,7 @@ import {
 import type { ServerContext } from '../server.js'
 import { handleListProjects, handleGetProjectTree } from './projects.js'
 import { handleReadDoc, handleReadFile, handleWriteDoc, handleApplyPatch } from './docs.js'
+import { handleEditDoc } from './edit.js'
 import { handleReadDocRange } from './range.js'
 import { handleCompile, handleReadCompileLog, handleDownloadPdf } from './compile.js'
 import {
@@ -111,6 +112,89 @@ const TOOL_DEFINITIONS = [
         },
       },
       required: ['projectId', 'path', 'ops'],
+    },
+  },
+  {
+    name: 'edit_doc',
+    description: 'High-level text edits with anchor-based find/replace, insert before/after, line-range replace, or raw OT ops. All edits in one call apply atomically (all or none). Pass dryRun=true to preview without applying. For most edits prefer this over apply_patch — the server resolves anchors → OT positions for you.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        path: { type: 'string' },
+        edits: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  mode: { const: 'replace' },
+                  find: { type: 'string' },
+                  replace: { type: 'string' },
+                  occurrence: {
+                    oneOf: [
+                      { type: 'string', enum: ['unique', 'first', 'all'] },
+                      { type: 'integer', minimum: 0 },
+                    ],
+                  },
+                },
+                required: ['mode', 'find', 'replace'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  mode: { const: 'insert_before' },
+                  find: { type: 'string' },
+                  text: { type: 'string' },
+                },
+                required: ['mode', 'find', 'text'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  mode: { const: 'insert_after' },
+                  find: { type: 'string' },
+                  text: { type: 'string' },
+                },
+                required: ['mode', 'find', 'text'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  mode: { const: 'replace_lines' },
+                  startLine: { type: 'integer', minimum: 1 },
+                  endLine: { type: 'integer', minimum: 1 },
+                  text: { type: 'string' },
+                },
+                required: ['mode', 'startLine', 'endLine', 'text'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  mode: { const: 'raw_ops' },
+                  ops: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        p: { type: 'integer', minimum: 0 },
+                        i: { type: 'string' },
+                        d: { type: 'string' },
+                      },
+                      required: ['p'],
+                    },
+                  },
+                },
+                required: ['mode', 'ops'],
+              },
+            ],
+          },
+        },
+        dryRun: { type: 'boolean' },
+      },
+      required: ['projectId', 'path', 'edits'],
     },
   },
   {
@@ -265,6 +349,13 @@ export function registerAllTools(server: Server, ctx: ServerContext) {
             await handleApplyPatch(
               ctx,
               args as { projectId: string; path: string; ops: Array<{ p: number; i?: string; d?: string }> },
+            ),
+          )
+        case 'edit_doc':
+          return wrap(
+            await handleEditDoc(
+              ctx,
+              args as unknown as Parameters<typeof handleEditDoc>[1],
             ),
           )
         case 'compile':
