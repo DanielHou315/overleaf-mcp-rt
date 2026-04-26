@@ -9,7 +9,7 @@ import type {
   JoinProjectResponse,
   ProjectEntity,
 } from './ot.types.js'
-import { OverleafError, OtVersionConflictError } from '../errors.js'
+import { OverleafError, OtVersionConflictError, OtDeleteMismatchError } from '../errors.js'
 import { computeOps, type OtOp } from './diff.js'
 
 /** Mirrors v0.1's TreeNode shape so MCP tool outputs stay stable. */
@@ -322,6 +322,11 @@ export class OtEngine {
     let baseline = this.getBaseline(docId)
     if (!baseline) baseline = await this.joinDoc(docId)
 
+    // Pre-validate against the local baseline. Surfaces OtDeleteMismatchError
+    // before the round-trip to the server, so the agent gets actionable
+    // feedback instead of an opaque server reject.
+    applyOpsLocal(baseline.text, ops)
+
     const update = { doc: docId, op: ops, v: baseline.version }
 
     try {
@@ -619,18 +624,20 @@ function isVersionMismatch(err: unknown): boolean {
  * echo back the resulting text) because Overleaf's otUpdateApplied
  * broadcasts only carry the op + version, not the resulting text.
  */
-function applyOpsLocal(text: string, ops: OtOp[]): string {
+export function applyOpsLocal(text: string, ops: OtOp[]): string {
   let out = text
-  for (const op of ops) {
+  for (let i = 0; i < ops.length; i++) {
+    const op = ops[i]!
     if (op.i !== undefined) {
       out = out.slice(0, op.p) + op.i + out.slice(op.p)
     } else if (op.d !== undefined) {
       const slice = out.slice(op.p, op.p + op.d.length)
       if (slice !== op.d) {
-        // Shouldn't happen — computeOps always emits exact-byte deletes —
-        // but if it does we leave the doc unchanged rather than corrupt it.
-        // The server-side ack would also reject in this case.
-        return text
+        throw new OtDeleteMismatchError(
+          `Delete op #${i} at position ${op.p} expected ${JSON.stringify(op.d.slice(0, 80))}` +
+            ` but doc has ${JSON.stringify(slice.slice(0, 80))}`,
+          { p: op.p, expected: op.d, actual: slice, opIndex: i },
+        )
       }
       out = out.slice(0, op.p) + out.slice(op.p + op.d.length)
     }

@@ -7,6 +7,7 @@ export type ErrorCode =
   | 'INVALID_CONFIG'
   | 'NOT_FOUND'
   | 'OT_VERSION_CONFLICT'
+  | 'OT_DELETE_MISMATCH'
 
 export class OverleafError extends Error {
   readonly code: ErrorCode
@@ -59,5 +60,14 @@ export class NotFoundError extends OverleafError {
 export class OtVersionConflictError extends OverleafError {
   constructor(message: string, context: Record<string, unknown> = {}) {
     super('OT_VERSION_CONFLICT', message, context)
+  }
+}
+
+export class OtDeleteMismatchError extends OverleafError {
+  constructor(
+    message: string,
+    context: { p: number; expected: string; actual: string; opIndex: number },
+  ) {
+    super('OT_DELETE_MISMATCH', message, context)
   }
 }
