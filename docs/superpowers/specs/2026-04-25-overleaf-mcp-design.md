@@ -275,7 +275,7 @@ overleaf-mcp/
 - `create_doc`, `create_folder`, `upload_file`, `rename`, `move`, `delete_entity` — all REST.
 - Acceptance: full CRUD on project structure.
 
-### v0.4 — Polish (~3 days)
+### v0.4 — Polish (~3 days) — shipped
 
 - `diagnose` subcommand.
 - Improved error mapping (CF Access vs. Overleaf 401).

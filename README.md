@@ -2,7 +2,7 @@
 
 A [Model Context Protocol](https://modelcontextprotocol.io/) server for **Overleaf Community Edition** that lets AI coding agents (Claude Code, Claude Desktop, Codex via MCP, Cursor, …) read, navigate, and compile LaTeX projects in your self-hosted Overleaf instance — **without** git-bridge or Server Pro.
 
-**v0.3 (current):** read + write + full tree CRUD via Overleaf's REST + native OT pipeline. Edits flow as live operations from a connected collaborator — no "file changed externally" toast.
+**v0.4 (current):** read + write + full tree CRUD via Overleaf's REST + native OT pipeline. Edits flow as live operations from a connected collaborator — no "file changed externally" toast.
 
 Design docs (source of truth) live in `docs/superpowers/`:
 - Spec: `docs/superpowers/specs/2026-04-25-overleaf-mcp-design.md`
@@ -124,7 +124,7 @@ Output is a step-by-step report:
 
 A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `PROXY_AUTH_FAILED`, `PROJECT_ACCESS_DENIED`) so you know which layer to fix.
 
-## Tools (v0.3)
+## Tools (v0.4)
 
 | Tool | Purpose |
 |---|---|
