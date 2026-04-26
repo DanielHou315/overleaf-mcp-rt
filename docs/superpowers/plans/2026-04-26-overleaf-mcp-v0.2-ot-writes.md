@@ -3603,11 +3603,9 @@ Expected: clean.
 - [ ] **Step 4: (Optional, manual) Run against the live CE**
 
 ```bash
-RUN_INTEGRATION=1 \
-  TEST_OVERLEAF_URL=http://your-overleaf-host:port \
-  TEST_OVERLEAF_EMAIL=you@example.com \
-  TEST_OVERLEAF_PASSWORD=your-password \
-  npm run test:integration
+# Credentials live in .env.integration (gitignored). See .env.integration.example.
+set -a; source .env.integration; set +a
+RUN_INTEGRATION=1 npm run test:integration
 ```
 
 Expected: both tests PASS. The OT test mutates `main.tex` in the user's `Test Project` — make sure that's OK before running.
@@ -3719,11 +3717,9 @@ Expected: 9 tools advertised — the v0.1 7 plus `write_doc` and `apply_patch`.
 - [ ] **Step 3: Run live integration**
 
 ```bash
-RUN_INTEGRATION=1 \
-  TEST_OVERLEAF_URL=http://your-overleaf-host:port \
-  TEST_OVERLEAF_EMAIL=you@example.com \
-  TEST_OVERLEAF_PASSWORD=your-password \
-  npm run test:integration
+# Credentials live in .env.integration (gitignored). See .env.integration.example.
+set -a; source .env.integration; set +a
+RUN_INTEGRATION=1 npm run test:integration
 ```
 
 Expected: both integration tests pass — including the OT write roundtrip.

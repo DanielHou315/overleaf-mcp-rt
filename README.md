@@ -1,14 +1,34 @@
-# overleaf-mcp-rt
+# Overleaf MCP
 
-A [Model Context Protocol](https://modelcontextprotocol.io/) server for **Overleaf Community Edition** that lets AI coding agents (Claude Code, Claude Desktop, Codex via MCP, Cursor, …) read, navigate, and compile LaTeX projects in your self-hosted Overleaf instance — **without** git-bridge or Server Pro.
+[![npm version](https://img.shields.io/npm/v/overleaf-mcp-rt.svg)](https://www.npmjs.com/package/overleaf-mcp-rt)
+[![npm downloads](https://img.shields.io/npm/dm/overleaf-mcp-rt.svg)](https://www.npmjs.com/package/overleaf-mcp-rt)
+[![license: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
+[![Node ≥ 20](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](https://nodejs.org/)
 
-**v1.0 (current):** read + write + full tree CRUD via Overleaf's REST + native OT pipeline. Edits flow as live operations from a connected collaborator — no "file changed externally" toast.
+> **A real-time [Model Context Protocol](https://modelcontextprotocol.io/) server for self-hosted Overleaf — no git-bridge, no Server Pro, no fork required.**
 
-Design docs (source of truth) live in the [GitHub repo](https://github.com/DanielHou315/overleaf-mcp-rt/tree/main/docs/superpowers).
+**Overleaf MCP** lets AI coding agents (Claude Code, Claude Desktop, Codex, Cursor, Continue, and any other MCP-compliant client) read, write, and compile LaTeX projects in any **personal or self-hosted Overleaf Community Edition** instance. Instead of relying on a git-bridge integration — a paid Server Pro feature that personal Overleaf installations don't have — it speaks Overleaf's **native operational-transform (OT) protocol over Socket.IO**, the same approach pioneered by [**Overleaf-Workshop**](https://github.com/iamhyc/Overleaf-Workshop). Edits flow live into the editor as collaborator operations, with no "file changed externally" toast and no extra infrastructure.
+
+Distributed on npm as **[`overleaf-mcp-rt`](https://www.npmjs.com/package/overleaf-mcp-rt)** — the `rt` suffix marks this as the **r**eal-**t**ime / OT-backed flavor, distinct from git-bridge–style Overleaf MCP servers.
+
+```bash
+npx overleaf-mcp-rt@latest --help
+```
+
+## Why "real-time"? Native OT vs git-bridge
+
+|  | **Overleaf MCP** (native OT) | git-bridge–style MCP servers |
+|---|---|---|
+| Works on personal / Community Edition Overleaf | ✅ | ❌ (Server Pro only) |
+| Latency to editor | live (per patch) | minutes (git push + bridge sync) |
+| Server requirements | stock Overleaf CE 3.x – 5.x | Overleaf Server Pro + git-bridge license |
+| "File changed externally" toast | never — edits arrive as co-author OT ops | yes — every git sync triggers it |
+| Auth model | session cookie + reverse-proxy headers | git over HTTPS / SSH |
+| Reverse-proxy auth (CF Access, Authelia, Tailscale, basic) | ✅ first-class | depends on git-bridge config |
+
+If you run your own Overleaf Community Edition — in Docker, on a homelab, behind Cloudflare Access, on a VPN, anywhere — and you want Claude Code or another AI agent to edit LaTeX in it with edits showing up live in the browser, this is the project for you.
 
 ## Install
-
-Two ways to use it:
 
 ```bash
 # A. Zero-install via npx (recommended for MCP clients)
@@ -30,11 +50,13 @@ npx overleaf-mcp-rt login --url https://overleaf.example.com
 # 2. Smoke test connectivity, auth, and OT handshake
 npx overleaf-mcp-rt diagnose
 
-# 3. List projects
+# 3. List your projects
 npx overleaf-mcp-rt ls
 ```
 
 ## MCP client config
+
+Works in Claude Code, Claude Desktop, Cursor, Codex (via MCP), Continue, and any MCP-compliant client.
 
 ```jsonc
 {
@@ -134,7 +156,7 @@ Output is a step-by-step report:
 
 A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `PROXY_AUTH_FAILED`, `PROJECT_ACCESS_DENIED`) so you know which layer to fix.
 
-## Tools (v1.0)
+## Tools
 
 | Tool | Purpose |
 |---|---|
@@ -154,11 +176,58 @@ A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `P
 | `move(projectId, path, newParentPath)` | Move a doc/file/folder |
 | `delete_entity(projectId, path)` | Delete a doc/file/folder |
 
+## v1.0 release notes
+
+This is the first stable release on npm. It bundles everything from the prior internal development phases (read-only, OT writes, tree mutations, polish) into a single shipping package:
+
+- **Live OT reads & writes** — `read_doc`, `write_doc`, `apply_patch` flow through Overleaf's native operational-transform pipeline. Other connected browser sessions see edits as a co-author typing, not as a "file changed externally" toast.
+- **Full tree CRUD over REST** — `create_doc`, `create_folder`, `upload_file`, `rename`, `move`, `delete_entity`.
+- **Compile pipeline** — `compile`, `read_compile_log`, `download_pdf` (returned as a binary MCP resource).
+- **`diagnose` CLI subcommand** — stepped report (config → REST → reverse-proxy → projects → OT) so failed setups surface the exact failing layer with a typed error code.
+- **Reverse-proxy auth pass-through** — `OVERLEAF_EXTRA_HEADERS` is merged into both the REST client and the Socket.IO handshake. Worked examples for Cloudflare Access, HTTP Basic Auth, Authelia / oauth2-proxy / forward-auth, and Tailscale / VPN above.
+- **Resilience** — per-doc write serialization (no baseline races), reconnect with jitter, OT-engine eviction signaling, WHATWG-URL normalization (subpath-safe), `pdfDownloadDomain` honored for overleaf.com REST flows.
+- **Compatibility** — stock Overleaf CE 3.x – 5.x. **No fork** of `sharelatex/sharelatex` and no patched server image required, so you can keep upgrading Overleaf cleanly.
+- **License** — AGPL-3.0-or-later (required because the OT/auth client is ported from Overleaf-Workshop).
+
+Pre-1.0 development happened under internal v0.1–v0.4 milestones; those are now collapsed into v1.0 and per-phase notes are kept only in [`docs/superpowers/plans/`](docs/superpowers/) for historical context.
+
+## FAQ
+
+**Does this require Overleaf Server Pro?**
+No. It targets stock **Overleaf Community Edition** (3.x – 5.x). The whole point of this project is to give personal/self-hosted CE users the same agent-driven editing experience that Server Pro git-bridge users get.
+
+**Does this require git-bridge?**
+No. Edits are sent as live OT operations over Socket.IO — the same protocol Overleaf's web editor uses internally.
+
+**Will edits show a "file changed externally" toast in the browser?**
+No. The MCP server connects as a regular collaborator, so other browser sessions see edits as a co-author typing.
+
+**Does it work with overleaf.com (the hosted SaaS)?**
+REST-backed tools (`list_projects`, `compile`, `download_pdf`) work against overleaf.com when you supply a session cookie. OT-backed reads/writes are designed and tested against Community Edition; the SaaS may diverge in protocol details and is not a targeted platform.
+
+**Does it work behind Cloudflare Access / Authelia / a VPN?**
+Yes. `OVERLEAF_EXTRA_HEADERS` is merged into both REST and Socket.IO handshake. See *Reverse-proxy auth (worked examples)* above.
+
+**How does this compare to [Overleaf-Workshop](https://github.com/iamhyc/Overleaf-Workshop)?**
+Overleaf-Workshop is the VS Code extension that pioneered speaking Overleaf's native OT/Socket.IO protocol from outside the browser. This project ports significant portions of its auth and OT client into a Model Context Protocol server, so any MCP-compatible AI agent — not just a VS Code user — can edit Overleaf projects in real time. Both are AGPL-3.0.
+
+**Why is the npm package `overleaf-mcp-rt` if the project is called "Overleaf MCP"?**
+The `rt` suffix marks this as the **r**eal-**t**ime / OT-backed flavor, since other "overleaf-mcp"–style packages may use git-bridge or zip-snapshot approaches. The shorter "Overleaf MCP" is the human-readable project name.
+
+## Source of truth
+
+Design docs and per-phase plans live in [`docs/superpowers/`](docs/superpowers/). When in doubt, the design spec there is canonical.
+
 ## License
 
-AGPL-3.0-or-later.
+[**AGPL-3.0-or-later**](LICENSE). Required because this project ports significant portions of code from [Overleaf-Workshop](https://github.com/iamhyc/Overleaf-Workshop) (also AGPL-3.0).
 
 ## Acknowledgements
 
-This project ports significant portions of the auth and (in v0.2) OT code from
-[**Overleaf-Workshop**](https://github.com/iamhyc/Overleaf-Workshop) by iamhyc and contributors. Used under AGPL-3.0.
+This project ports significant portions of the auth and OT code from [**Overleaf-Workshop**](https://github.com/iamhyc/Overleaf-Workshop) by iamhyc and contributors. Used under AGPL-3.0.
+
+Built on the [Model Context Protocol](https://modelcontextprotocol.io/) by Anthropic.
+
+---
+
+**Keywords:** Overleaf · ShareLaTeX · MCP · Model Context Protocol · Claude Code · Claude Desktop · Codex · Cursor · Continue · LaTeX · self-hosted Overleaf · Overleaf Community Edition · operational transform · Socket.IO · git-bridge alternative · AI LaTeX agent · real-time collaborative editing

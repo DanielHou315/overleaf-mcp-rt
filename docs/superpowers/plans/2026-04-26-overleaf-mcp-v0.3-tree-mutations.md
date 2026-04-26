@@ -2051,11 +2051,9 @@ Expected: clean.
 - [ ] **Step 4: (Optional, manual) run against the live CE**
 
 ```bash
-RUN_INTEGRATION=1 \
-  TEST_OVERLEAF_URL=http://your-overleaf-host:port \
-  TEST_OVERLEAF_EMAIL=you@example.com \
-  TEST_OVERLEAF_PASSWORD=your-password \
-  npm run test:integration
+# Credentials live in .env.integration (gitignored). See .env.integration.example.
+set -a; source .env.integration; set +a
+RUN_INTEGRATION=1 npm run test:integration
 ```
 
 Expected: all 3 tests pass. Mutations leave no debris (the new folder is deleted at the end).

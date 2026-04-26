@@ -1532,11 +1532,9 @@ Expected: 5 ✓ lines (or 4 ✓ + 1 ⚠ if your CE is behind CF and headers are 
 - [ ] **Step 3: Verify the existing live integration still passes**
 
 ```bash
-RUN_INTEGRATION=1 \
-  TEST_OVERLEAF_URL=http://your-overleaf-host:port \
-  TEST_OVERLEAF_EMAIL=you@example.com \
-  TEST_OVERLEAF_PASSWORD=your-password \
-  npm run test:integration
+# Credentials live in .env.integration (gitignored). See .env.integration.example.
+set -a; source .env.integration; set +a
+RUN_INTEGRATION=1 npm run test:integration
 ```
 
 Expected: 3 tests pass — REST listing+compile, OT roundtrip, v0.3 tree CRUD.
