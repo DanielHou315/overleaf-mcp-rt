@@ -5,12 +5,13 @@ export async function handleReadDoc(
   ctx: ServerContext,
   input: { projectId: string; path: string },
 ): Promise<{ content: string }> {
-  const tree = await ctx.cache.get(input.projectId)
-  const content = tree.readDoc(input.path)
-  if (content === null) {
+  const engine = await ctx.ot.get(input.projectId)
+  const docId = engine.pathToDocId(input.path)
+  if (docId === null) {
     throw new NotFoundError(`No doc at ${input.path} in project ${input.projectId}`)
   }
-  return { content }
+  const baseline = await engine.joinDoc(docId)
+  return { content: baseline.text }
 }
 
 export async function handleReadFile(

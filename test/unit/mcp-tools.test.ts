@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
+import { vi } from 'vitest'
 import { setupServer } from 'msw/node'
 import { http, HttpResponse } from 'msw'
 import { readFileSync } from 'node:fs'
@@ -12,6 +13,9 @@ import {
   handleReadCompileLog,
   handleDownloadPdf,
 } from '../../src/mcp/tools/compile.js'
+import { OtEngine } from '../../src/overleaf/ot.js'
+import { FakeSocket } from './fake-socket.js'
+import type { JoinProjectResponse } from '../../src/overleaf/ot.types.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const FIXTURES = join(__dirname, '..', 'fixtures')
@@ -33,6 +37,44 @@ const ctx = buildContext({
 
 function arrayBufferOf(buf: Buffer): ArrayBuffer {
   return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+}
+
+function buildOtTestCtx() {
+  const sock = new FakeSocket()
+  const ctx = buildContext({
+    url: 'https://o.example',
+    sessionCookie: 'overleaf_session2=abc',
+    extraHeaders: {},
+    debug: false,
+    csrfToken: 'csrf',
+  })
+  // Override the OT factory to inject our FakeSocket for tests
+  ;(ctx as unknown as { ot: { get: (p: string) => Promise<OtEngine> } }).ot = {
+    async get(projectId: string) {
+      const engine = new OtEngine({ socket: sock, projectId })
+      const cp = engine.connect()
+      sock.simulate('connectionAccepted', null, 'pub-AGENT')
+      sock.simulate('joinProjectResponse', minimalJoinResponse(projectId))
+      await cp
+      return engine
+    },
+  }
+  return { ctx, sock }
+}
+
+function minimalJoinResponse(projectId: string): JoinProjectResponse {
+  return {
+    project: {
+      _id: projectId, name: projectId, rootDoc_id: 'd-main',
+      rootFolder: [{
+        _id: 'root', name: 'rootFolder',
+        docs: [{ _id: 'd-main', name: 'main.tex' }],
+        fileRefs: [{ _id: 'f-img', name: 'figures.png' }],
+        folders: [],
+      }],
+    },
+    permissionsLevel: 'owner', protocolVersion: 2, publicId: 'pub-AGENT',
+  }
 }
 
 describe('list_projects tool', () => {
@@ -59,15 +101,19 @@ describe('get_project_tree tool', () => {
   })
 })
 
-describe('read_doc tool', () => {
-  it('returns text content', async () => {
-    server.use(
-      http.get('https://o.example/project/p2/download/zip', () =>
-        HttpResponse.arrayBuffer(arrayBufferOf(projectZip)),
-      ),
-    )
+describe('read_doc tool (OT-backed)', () => {
+  it('returns text content via joinDoc', async () => {
+    const { ctx, sock } = buildOtTestCtx()
+    sock.respondToEmit('joinDoc', () => [null, ['\\documentclass{article}\n', 'Hello.'], 7, []])
     const out = await handleReadDoc(ctx, { projectId: 'p2', path: 'main.tex' })
     expect(out.content).toContain('\\documentclass')
+  })
+
+  it('throws NotFoundError when path is not in tree', async () => {
+    const { ctx } = buildOtTestCtx()
+    await expect(handleReadDoc(ctx, { projectId: 'p2', path: 'missing.tex' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    })
   })
 })
 
