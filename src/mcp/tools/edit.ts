@@ -34,15 +34,25 @@ export async function handleEditDoc(
     throw new OverleafError('OVERLEAF_GENERIC', 'edits must be a non-empty array')
   }
 
-  // raw_ops trusts caller-supplied positions and is not safe to interleave
-  // with anchor-based modes (whose ops are derived from baseline positions).
-  // Reject mixed calls to avoid silent corruption.
-  const hasRawOps = input.edits.some((e) => e.mode === 'raw_ops')
-  const hasAnchor = input.edits.some((e) => e.mode !== 'raw_ops')
-  if (hasRawOps && hasAnchor) {
+  // raw_ops and unified_diff produce ops referenced against the BASELINE doc
+  // (caller-supplied positions; whole-doc replace) and can't safely interleave
+  // with anchor-based edits (whose positions are derived from the baseline but
+  // applied in descending order). Reject any mixed call.
+  const FULL_DOC_MODES: ReadonlySet<EditMode['mode']> = new Set(['raw_ops', 'unified_diff'])
+  const hasFullDoc = input.edits.some((e) => FULL_DOC_MODES.has(e.mode))
+  const hasOther = input.edits.some((e) => !FULL_DOC_MODES.has(e.mode))
+  if (hasFullDoc && hasOther) {
     throw new OverleafError(
       'OVERLEAF_GENERIC',
-      'edit_doc cannot mix raw_ops with anchor-based modes in one call (positional safety)',
+      'edit_doc cannot mix raw_ops or unified_diff with anchor-based modes in one call (positional safety)',
+    )
+  }
+  // Also reject MULTIPLE full-doc edits (two unified_diffs, or unified_diff + raw_ops).
+  // Each rewrites or repositions the entire doc; combining them is ambiguous.
+  if (input.edits.filter((e) => FULL_DOC_MODES.has(e.mode)).length > 1) {
+    throw new OverleafError(
+      'OVERLEAF_GENERIC',
+      'edit_doc accepts at most one raw_ops or unified_diff edit per call',
     )
   }
 

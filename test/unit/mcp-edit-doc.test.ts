@@ -115,7 +115,7 @@ describe('edit_doc raw_ops safety', () => {
           { mode: 'raw_ops', ops: [{ p: 0, i: 'X' }] },
         ],
       }),
-    ).rejects.toThrow(/cannot mix raw_ops/)
+    ).rejects.toThrow(/cannot mix raw_ops or unified_diff/)
   })
 })
 

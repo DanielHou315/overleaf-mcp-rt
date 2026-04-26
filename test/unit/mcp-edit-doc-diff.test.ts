@@ -57,4 +57,49 @@ describe('edit_doc unified_diff', () => {
       }),
     ).rejects.toThrow(/diff did not apply/)
   })
+
+  it('rejects mixing unified_diff with anchor-based modes', async () => {
+    const h = makeCtx('first line\nsecond line\n')
+    await expect(
+      handleEditDoc(h.ctx, {
+        projectId: 'p', path: 'file.tex',
+        edits: [
+          { mode: 'replace', find: 'first', replace: 'FIRST' },
+          { mode: 'unified_diff', diff: DIFF },
+        ],
+      }),
+    ).rejects.toThrow(/cannot mix raw_ops or unified_diff/)
+  })
+
+  it('rejects mixing unified_diff with raw_ops', async () => {
+    const h = makeCtx('hello\n')
+    await expect(
+      handleEditDoc(h.ctx, {
+        projectId: 'p', path: 'file.tex',
+        edits: [
+          { mode: 'unified_diff', diff: DIFF },
+          { mode: 'raw_ops', ops: [{ p: 0, i: 'X' }] },
+        ],
+      }),
+    ).rejects.toThrow(/at most one raw_ops or unified_diff/)
+  })
+
+  const DIFF_NO_TRAILING_NEWLINE = `--- a/file.tex
++++ b/file.tex
+@@ -1,2 +1,2 @@
+ first line
+-second line
+\\ No newline at end of file
++second LINE
+\\ No newline at end of file
+`
+
+  it('applies a unified diff to a doc with no trailing newline', async () => {
+    const h = makeCtx('first line\nsecond line')
+    await handleEditDoc(h.ctx, {
+      projectId: 'p', path: 'file.tex',
+      edits: [{ mode: 'unified_diff', diff: DIFF_NO_TRAILING_NEWLINE }],
+    })
+    expect(h.text()).toBe('first line\nsecond LINE')
+  })
 })
