@@ -5,7 +5,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import type { ServerContext } from '../server.js'
 import { handleListProjects, handleGetProjectTree } from './projects.js'
-import { handleReadDoc, handleReadFile } from './docs.js'
+import { handleReadDoc, handleReadFile, handleWriteDoc } from './docs.js'
 import { handleCompile, handleReadCompileLog, handleDownloadPdf } from './compile.js'
 import { OverleafError } from '../../errors.js'
 
@@ -46,6 +46,19 @@ const TOOL_DEFINITIONS = [
         path: { type: 'string' },
       },
       required: ['projectId', 'path'],
+    },
+  },
+  {
+    name: 'write_doc',
+    description: 'Replace a text doc by path within a project. Edits flow as live OT ops; no "file changed externally" toast.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        path: { type: 'string' },
+        content: { type: 'string' },
+      },
+      required: ['projectId', 'path', 'content'],
     },
   },
   {
@@ -98,6 +111,13 @@ export function registerAllTools(server: Server, ctx: ServerContext) {
           return wrap(await handleReadDoc(ctx, args as { projectId: string; path: string }))
         case 'read_file':
           return wrap(await handleReadFile(ctx, args as { projectId: string; path: string }))
+        case 'write_doc':
+          return wrap(
+            await handleWriteDoc(
+              ctx,
+              args as { projectId: string; path: string; content: string },
+            ),
+          )
         case 'compile':
           return wrap(
             await handleCompile(

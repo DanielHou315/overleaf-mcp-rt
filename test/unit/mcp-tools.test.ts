@@ -7,7 +7,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildContext } from '../../src/mcp/server.js'
 import { handleListProjects, handleGetProjectTree } from '../../src/mcp/tools/projects.js'
-import { handleReadDoc, handleReadFile } from '../../src/mcp/tools/docs.js'
+import { handleReadDoc, handleReadFile, handleWriteDoc } from '../../src/mcp/tools/docs.js'
 import {
   handleCompile,
   handleReadCompileLog,
@@ -127,16 +127,56 @@ describe('read_doc tool (OT-backed)', () => {
   })
 })
 
-describe('read_file tool', () => {
-  it('returns base64-encoded bytes', async () => {
+describe('read_file tool (REST-backed via OT tree)', () => {
+  it('looks up fileId via OT tree and fetches via REST', async () => {
+    const { ctx } = buildOtTestCtx()
     server.use(
-      http.get('https://o.example/project/p3/download/zip', () =>
-        HttpResponse.arrayBuffer(arrayBufferOf(projectZip)),
+      http.get('https://o.example/project/p1/file/f-img', () =>
+        HttpResponse.arrayBuffer(new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer), // PNG magic
       ),
     )
-    const out = await handleReadFile(ctx, { projectId: 'p3', path: 'figures/img.png' })
+    const out = await handleReadFile(ctx, { projectId: 'p1', path: 'figures.png' })
     const decoded = Buffer.from(out.contentBase64, 'base64')
-    expect(decoded[0]).toBe(0x89) // PNG magic
+    expect(decoded[0]).toBe(0x89)
+    expect(decoded[1]).toBe(0x50)
+  })
+
+  it('throws NotFoundError when path is not a binary in the tree', async () => {
+    const { ctx } = buildOtTestCtx()
+    await expect(
+      handleReadFile(ctx, { projectId: 'p1', path: 'main.tex' }), // tex is a doc, not a file
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+})
+
+describe('write_doc tool (OT)', () => {
+  it('emits applyOtUpdate and bumps baseline on successful echo', async () => {
+    const { ctx, sock } = buildOtTestCtx()
+    sock.respondToEmit('joinDoc', () => [null, ['hello'], 0, []])
+    sock.respondToEmit('applyOtUpdate', () => {
+      queueMicrotask(() => sock.simulate('otUpdateApplied', {
+        doc: 'd-main',
+        op: [{ p: 5, i: ' world' }],
+        v: 0,
+        meta: { source: 'pub-AGENT', ts: 0, user_id: 'u' },
+      }))
+      return [null]
+    })
+
+    const out = await handleWriteDoc(ctx, {
+      projectId: 'p1',
+      path: 'main.tex',
+      content: 'hello world',
+    })
+    expect(out.ok).toBe(true)
+    expect(sock.emitsOf('applyOtUpdate')).toHaveLength(1)
+  })
+
+  it('throws NotFoundError when path is not a doc', async () => {
+    const { ctx } = buildOtTestCtx()
+    await expect(
+      handleWriteDoc(ctx, { projectId: 'p1', path: 'figures.png', content: 'x' }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
 })
 
