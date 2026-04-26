@@ -262,7 +262,7 @@ overleaf-mcp/
 - No write tools yet.
 - Acceptance: an AI agent can list projects, read files, trigger compile, fetch logs/PDF.
 
-### v0.2 — OT writes and live reads (~2 weeks)
+### v0.2 — OT writes and live reads (~2 weeks) — shipped
 
 - Port `socketio.ts` from Overleaf-Workshop.
 - Implement `write_doc` and `apply_patch` via OT.

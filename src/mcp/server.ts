@@ -2,15 +2,14 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { OverleafHttp } from '../overleaf/http.js'
 import { OverleafRest } from '../overleaf/rest.js'
-import { ProjectCache } from '../overleaf/cache.js'
-import { parseProjectZip } from '../overleaf/zip.js'
-import { ProjectTree } from '../overleaf/tree.js'
 import { registerAllTools } from './tools/index.js'
+import { OverleafSocket } from '../overleaf/socket.js'
+import { OtEngineRegistry, type OtEngineFactory } from '../overleaf/ot.js'
 
 export interface ServerContext {
   http: OverleafHttp
   rest: OverleafRest
-  cache: ProjectCache
+  ot: OtEngineRegistry
 }
 
 export interface ContextOptions {
@@ -19,7 +18,6 @@ export interface ContextOptions {
   csrfToken: string
   extraHeaders: Record<string, string>
   debug: boolean
-  cacheTtlMs?: number
 }
 
 export function buildContext(opts: ContextOptions): ServerContext {
@@ -30,20 +28,25 @@ export function buildContext(opts: ContextOptions): ServerContext {
     extraHeaders: opts.extraHeaders,
   })
   const rest = new OverleafRest(http)
-  const cache = new ProjectCache(
-    async (projectId: string) => {
-      const bytes = await rest.downloadProjectZip(projectId)
-      const entries = await parseProjectZip(bytes)
-      return new ProjectTree(entries)
-    },
-    { ttlMs: opts.cacheTtlMs ?? 60_000 },
-  )
-  return { http, rest, cache }
+  const otFactory: OtEngineFactory = (projectId) => {
+    const makeSocket = () => new OverleafSocket({
+      url: opts.url,
+      projectId,
+      sessionCookie: opts.sessionCookie,
+      extraHeaders: opts.extraHeaders,
+    })
+    return {
+      socket: makeSocket(),
+      socketFactory: makeSocket,
+    }
+  }
+  const ot = new OtEngineRegistry(otFactory)
+  return { http, rest, ot }
 }
 
 export async function runMcpServer(ctx: ServerContext) {
   const server = new Server(
-    { name: 'overleaf-mcp', version: '0.1.0' },
+    { name: 'overleaf-mcp', version: '0.2.0' },
     { capabilities: { tools: {} } },
   )
   registerAllTools(server, ctx)

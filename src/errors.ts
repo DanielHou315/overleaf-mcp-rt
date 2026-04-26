@@ -6,6 +6,7 @@ export type ErrorCode =
   | 'NETWORK_ERROR'
   | 'INVALID_CONFIG'
   | 'NOT_FOUND'
+  | 'OT_VERSION_CONFLICT'
 
 export class OverleafError extends Error {
   readonly code: ErrorCode
@@ -52,5 +53,11 @@ export class InvalidConfigError extends OverleafError {
 export class NotFoundError extends OverleafError {
   constructor(message: string, context: Record<string, unknown> = {}) {
     super('NOT_FOUND', message, context)
+  }
+}
+
+export class OtVersionConflictError extends OverleafError {
+  constructor(message: string, context: Record<string, unknown> = {}) {
+    super('OT_VERSION_CONFLICT', message, context)
   }
 }
