@@ -109,3 +109,30 @@ describe('OverleafRest.uploadFile', () => {
     ).rejects.toThrow(/413/)
   })
 })
+
+describe('OverleafRest.renameEntity', () => {
+  it.each([
+    ['doc', 'd-x'],
+    ['file', 'f-x'],
+    ['folder', 'fold-x'],
+  ] as const)('POSTs to /project/p1/%s/:id/rename', async (kind, id) => {
+    let bodyJson: unknown = null
+    server.use(
+      http.post(`https://o.example/project/p1/${kind}/${id}/rename`, async ({ request }) => {
+        bodyJson = await request.json()
+        return new HttpResponse(null, { status: 200 })
+      }),
+    )
+    await makeRest().renameEntity('p1', kind, id, 'new-name')
+    expect(bodyJson).toEqual({ name: 'new-name' })
+  })
+
+  it('throws on non-OK', async () => {
+    server.use(
+      http.post('https://o.example/project/p1/doc/d-x/rename', () =>
+        HttpResponse.text('bad', { status: 400 }),
+      ),
+    )
+    await expect(makeRest().renameEntity('p1', 'doc', 'd-x', 'y')).rejects.toThrow(/400/)
+  })
+})

@@ -204,4 +204,23 @@ export class OverleafRest {
     }
     return { id: json.entity_id, kind: json.entity_type }
   }
+
+  /** Rename an entity. Workshop ref: renameEntity. */
+  async renameEntity(
+    projectId: string,
+    kind: 'doc' | 'file' | 'folder',
+    entityId: string,
+    newName: string,
+  ): Promise<void> {
+    const res = await this.http.postJson(
+      `/project/${encodeURIComponent(projectId)}/${kind}/${encodeURIComponent(entityId)}/rename`,
+      { name: newName },
+    )
+    if (!res.ok) {
+      throw new OverleafError(
+        'OVERLEAF_GENERIC',
+        `renameEntity ${kind} ${entityId} returned ${res.status}`,
+      )
+    }
+  }
 }
