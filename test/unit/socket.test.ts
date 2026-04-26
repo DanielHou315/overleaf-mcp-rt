@@ -82,14 +82,14 @@ describe('OverleafSocket', () => {
     await expect(sock.emitWithAck('joinDoc', 'd1')).rejects.toMatchObject({ message: 'doc not found' })
   })
 
-  it('on() and off() forward to the underlying socket', () => {
+  it('on() forwards to socket.on; off() forwards to socket.removeListener (the v0.9 fork has no off())', () => {
     const onSpy = vi.fn()
-    const offSpy = vi.fn()
+    const removeListenerSpy = vi.fn()
     const fakeRaw = {
       emit: vi.fn(),
       on: onSpy,
-      off: offSpy,
-      removeListener: vi.fn(),
+      off: vi.fn(),
+      removeListener: removeListenerSpy,
       disconnect: vi.fn(),
       socket: { connected: true, connect: vi.fn() },
       json: { emit: vi.fn() },
@@ -102,7 +102,7 @@ describe('OverleafSocket', () => {
     sock.on('joinProjectResponse', handler)
     sock.off('joinProjectResponse', handler)
     expect(onSpy).toHaveBeenCalledWith('joinProjectResponse', handler)
-    expect(offSpy).toHaveBeenCalledWith('joinProjectResponse', handler)
+    expect(removeListenerSpy).toHaveBeenCalledWith('joinProjectResponse', handler)
   })
 
   it('disconnect() closes the underlying socket', () => {

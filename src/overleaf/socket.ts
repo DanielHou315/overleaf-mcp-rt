@@ -78,7 +78,8 @@ export class OverleafSocket implements SocketLike {
   }
 
   off(event: string, handler: (...args: unknown[]) => void): void {
-    this.raw.off(event, handler)
+    // The v0.9 fork's EventEmitter exposes removeListener, not off.
+    this.raw.removeListener(event, handler)
   }
 
   disconnect(): void {
