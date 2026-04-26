@@ -4,6 +4,10 @@ A [Model Context Protocol](https://modelcontextprotocol.io/) server for **Overle
 
 This is **v0.1: read-only**. Future versions will add writes via Overleaf's native realtime OT pipeline (no "file changed externally" toast).
 
+Design docs (source of truth) live in `docs/superpowers/`:
+- Spec: `docs/superpowers/specs/2026-04-25-overleaf-mcp-design.md`
+- v0.1 plan: `docs/superpowers/plans/2026-04-25-overleaf-mcp-v0.1-read-only.md`
+
 ## Install
 
 ```bash

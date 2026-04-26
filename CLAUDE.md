@@ -13,9 +13,9 @@ When making decisions, defer to the spec; if the spec is silent, raise it for di
 
 ## Status
 
-- v0.1 (read-only via REST + project-zip cache) — plan written, implementation not yet started
-- v0.2 (OT-live writes via ported Overleaf-Workshop Socket.IO client) — deferred until v0.1 ships
-- Implementation lives at `overleaf-mcp/` (created during Task 1 of the plan)
+- v0.1 (read-only via REST + project-zip cache) — shipped
+- v0.2 (OT-live writes via ported Overleaf-Workshop Socket.IO client) — not yet started
+- Implementation lives at the repo root (`src/`, `test/`, `scripts/`, `package.json`, …)
 
 ## Hard constraints
 
@@ -31,7 +31,9 @@ Node.js ≥ 20, TypeScript 5, `@modelcontextprotocol/sdk`, `vitest` + `msw` for 
 ## Repo layout
 
 ```
+src/                   The MCP server source (cli, config, errors, mcp/, overleaf/)
+test/                  Unit + integration tests; HTML/zip fixtures
+scripts/               Build-time helpers (e.g., make-fixture-zip.mjs)
 docs/superpowers/      Specs and plans (source of truth)
-overleaf-mcp/          The MCP server (created by Task 1)
 overleaf/              Local clone of overleaf/overleaf for research; gitignored
 ```
