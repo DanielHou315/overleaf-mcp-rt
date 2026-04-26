@@ -1,4 +1,4 @@
-import { AuthFailedError, NetworkError, ProxyAuthFailedError } from '../errors.js'
+import { AuthFailedError, NetworkError, ProjectAccessDeniedError, ProxyAuthFailedError } from '../errors.js'
 
 export interface HttpOptions {
   url: string
@@ -66,11 +66,11 @@ export class OverleafHttp {
       throw new NetworkError(`fetch failed for ${method} ${url}`, err)
     }
 
-    this.checkAuthErrors(res)
+    this.checkAuthErrors(res, path)
     return res
   }
 
-  private checkAuthErrors(res: Response) {
+  private checkAuthErrors(res: Response, requestPath: string) {
     if (res.status === 403 && (res.headers.has('cf-ray') || res.headers.has('cf-mitigated'))) {
       throw new ProxyAuthFailedError('Upstream proxy (Cloudflare) rejected the request', {
         cfRay: res.headers.get('cf-ray'),
@@ -83,6 +83,15 @@ export class OverleafHttp {
       const loc = res.headers.get('location') ?? ''
       if (loc.startsWith('/login') || loc.endsWith('/login')) {
         throw new AuthFailedError('Session redirected to /login (cookie likely expired)')
+      }
+    }
+    if (res.status === 403) {
+      // Project-scoped 403 (no CF headers) means the configured account is
+      // not a collaborator on the project. Pull the projectId out of the
+      // path if possible for the error context.
+      const match = requestPath.match(/\/project\/([^/?#]+)/)
+      if (match) {
+        throw new ProjectAccessDeniedError(decodeURIComponent(match[1]!))
       }
     }
   }

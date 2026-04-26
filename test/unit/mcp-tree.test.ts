@@ -285,3 +285,40 @@ describe('delete_entity tool', () => {
     ).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
 })
+
+describe('upload_file MIME sniff fallback', () => {
+  it('infers image/png from .png when mimeType is omitted', async () => {
+    const { ctx, sock } = buildTreeTestCtx()
+    let receivedForm: FormData | null = null
+    server.use(
+      http.post('https://o.example/project/p1/upload', async ({ request }) => {
+        receivedForm = await request.formData()
+        setTimeout(() => sock.simulate('reciveNewFile', 'root', { _id: 'f-up', name: 'logo.png' }), 5)
+        return HttpResponse.json({ success: true, entity_id: 'f-up', entity_type: 'file' })
+      }),
+    )
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64')
+    const out = await handleUploadFile(ctx, {
+      projectId: 'p1', parentPath: '', name: 'logo.png', contentBase64: png,
+    })
+    expect(out.kind).toBe('file')
+    expect(receivedForm!.get('type')).toBe('image/png')
+  })
+
+  it('falls back to application/octet-stream for unknown extensions', async () => {
+    const { ctx, sock } = buildTreeTestCtx()
+    let receivedForm: FormData | null = null
+    server.use(
+      http.post('https://o.example/project/p1/upload', async ({ request }) => {
+        receivedForm = await request.formData()
+        setTimeout(() => sock.simulate('reciveNewFile', 'root', { _id: 'f-up', name: 'mystery.bin' }), 5)
+        return HttpResponse.json({ success: true, entity_id: 'f-up', entity_type: 'file' })
+      }),
+    )
+    await handleUploadFile(ctx, {
+      projectId: 'p1', parentPath: '', name: 'mystery.bin',
+      contentBase64: Buffer.from([0xab, 0xcd]).toString('base64'),
+    })
+    expect(receivedForm!.get('type')).toBe('application/octet-stream')
+  })
+})

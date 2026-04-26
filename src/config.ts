@@ -48,9 +48,19 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
   }
   if (!/^https?:\/\//i.test(url)) {
     throw new InvalidConfigError(
-      `OVERLEAF_URL must start with http:// or https:// (got: ${url})`,
+      `OVERLEAF_URL is an invalid URL — must start with http:// or https:// (got: ${url})`,
     )
   }
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new InvalidConfigError(`OVERLEAF_URL has no host or is not a valid URL: ${url}`)
+  }
+  if (!parsed.host) {
+    throw new InvalidConfigError(`OVERLEAF_URL must have a host (got: ${url})`)
+  }
+  const normalizedUrl = parsed.origin + parsed.pathname.replace(/\/+$/, '')
   if (!sessionCookie) {
     throw new InvalidConfigError(
       'OVERLEAF_SESSION_COOKIE is required (paste from devtools or run `overleaf-mcp login`).',
@@ -69,7 +79,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
   }
 
   return {
-    url: url.replace(/\/$/, ''),
+    url: normalizedUrl,
     sessionCookie,
     extraHeaders,
     debug: env.OVERLEAF_DEBUG === '1' || env.OVERLEAF_DEBUG === 'true',

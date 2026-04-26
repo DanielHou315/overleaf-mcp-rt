@@ -6,6 +6,7 @@ interface CompileResult {
   status: string
   pdfUrl: string | null
   logUrl: string | null
+  pdfDownloadDomain?: string
 }
 
 async function compileAndCache(
@@ -20,6 +21,7 @@ async function compileAndCache(
     status: res.status,
     pdfUrl: pdf?.url ?? null,
     logUrl: log?.url ?? null,
+    pdfDownloadDomain: res.pdfDownloadDomain,
   }
 }
 
@@ -41,7 +43,7 @@ export async function handleReadCompileLog(
   if (!result.logUrl) {
     throw new OverleafError('NOT_FOUND', `No log produced for project ${input.projectId}`)
   }
-  const { bytes } = await ctx.rest.downloadOutputFile(result.logUrl)
+  const { bytes } = await ctx.rest.downloadOutputFile(result.logUrl, result.pdfDownloadDomain)
   return { log: bytes.toString('utf-8') }
 }
 
@@ -60,6 +62,9 @@ export async function handleDownloadPdf(
       `No PDF produced for project ${input.projectId} (compile status: ${result.status})`,
     )
   }
-  const { bytes, contentType } = await ctx.rest.downloadOutputFile(result.pdfUrl)
+  const { bytes, contentType } = await ctx.rest.downloadOutputFile(
+    result.pdfUrl,
+    result.pdfDownloadDomain,
+  )
   return { bytes, contentType, status: result.status }
 }

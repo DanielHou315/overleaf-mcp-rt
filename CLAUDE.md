@@ -15,8 +15,9 @@ When making decisions, defer to the spec; if the spec is silent, raise it for di
 
 - v0.1 (read-only via REST + project-zip cache) — superseded by v0.2
 - v0.2 (OT-live reads + writes via ported Overleaf-Workshop Socket.IO client) — superseded by v0.3
-- v0.3 (REST tree mutations: create_doc, create_folder, upload_file, rename, move, delete_entity) — shipped
-- v0.4 (polish: error mapping, per-doc write serialization, cookie-expiry handling, diagnose subcommand) — not yet started
+- v0.3 (REST tree mutations: create_doc, create_folder, upload_file, rename, move, delete_entity) — superseded by v0.4
+- v0.4 (polish: error mapping, per-doc write serialization, reconnect jitter, diagnose subcommand, pdfDownloadDomain, README auth examples) — shipped
+- v1.0 (npm publish under AGPL-3.0 with Workshop attribution) — not yet started
 - Implementation lives at the repo root (`src/`, `test/`, `scripts/`, `package.json`, …)
 
 ## Hard constraints
@@ -28,7 +29,7 @@ When making decisions, defer to the spec; if the spec is silent, raise it for di
 
 ## Tech stack
 
-Node.js ≥ 20, TypeScript 5, `@modelcontextprotocol/sdk`, `vitest` + `msw` for tests, `unzipper` for project-zip parsing, `node-html-parser` for CSRF/project-list scrape. Distribution via `npx`.
+Node.js ≥ 20, TypeScript 5, `@modelcontextprotocol/sdk`, `vitest` + `msw` for tests, `socket.io-client` (Overleaf 0.9 fork, patched via `patch-package`) for OT, `node-html-parser` for CSRF/project-list scrape. Distribution via `npx`.
 
 ## Repo layout
 

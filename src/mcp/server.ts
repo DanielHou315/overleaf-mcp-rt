@@ -46,7 +46,7 @@ export function buildContext(opts: ContextOptions): ServerContext {
 
 export async function runMcpServer(ctx: ServerContext) {
   const server = new Server(
-    { name: 'overleaf-mcp', version: '0.3.0' },
+    { name: 'overleaf-mcp', version: '0.4.0' },
     { capabilities: { tools: {} } },
   )
   registerAllTools(server, ctx)

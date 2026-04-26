@@ -83,3 +83,43 @@ describe('OverleafRest.downloadFile', () => {
     expect(contentType).toBe('image/png')
   })
 })
+
+describe('OverleafRest.downloadOutputFile (with pdfDownloadDomain)', () => {
+  it('joins a relative buildUrl onto pdfDownloadDomain when set', async () => {
+    const rest = makeRest()
+    server.use(
+      http.post('https://o.example/project/p7/compile', () =>
+        HttpResponse.json({
+          status: 'success',
+          pdfDownloadDomain: 'https://cdn.o.example',
+          outputFiles: [
+            { path: 'output.pdf', url: '/project/p7/build/b/output/output.pdf', type: 'pdf' },
+          ],
+        }),
+      ),
+      http.get('https://cdn.o.example/project/p7/build/b/output/output.pdf', () =>
+        HttpResponse.arrayBuffer(new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer, {
+          headers: { 'Content-Type': 'application/pdf' },
+        }),
+      ),
+    )
+    const compileRes = await rest.compile('p7')
+    expect(compileRes.pdfDownloadDomain).toBe('https://cdn.o.example')
+
+    const url = compileRes.outputFiles.find((f) => f.path === 'output.pdf')!.url
+    const { bytes, contentType } = await rest.downloadOutputFile(url, compileRes.pdfDownloadDomain)
+    expect(bytes.toString('utf-8').startsWith('%PDF')).toBe(true)
+    expect(contentType).toBe('application/pdf')
+  })
+
+  it('falls back to the main origin when pdfDownloadDomain is omitted', async () => {
+    const rest = makeRest()
+    server.use(
+      http.get('https://o.example/project/p7/build/b/output/output.pdf', () =>
+        HttpResponse.arrayBuffer(new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer),
+      ),
+    )
+    const { bytes } = await rest.downloadOutputFile('/project/p7/build/b/output/output.pdf')
+    expect(bytes[0]).toBe(0x25)
+  })
+})
