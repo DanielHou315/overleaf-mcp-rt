@@ -5,7 +5,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import type { ServerContext } from '../server.js'
 import { handleListProjects, handleGetProjectTree } from './projects.js'
-import { handleReadDoc, handleReadFile, handleWriteDoc } from './docs.js'
+import { handleReadDoc, handleReadFile, handleWriteDoc, handleApplyPatch } from './docs.js'
 import { handleCompile, handleReadCompileLog, handleDownloadPdf } from './compile.js'
 import { OverleafError } from '../../errors.js'
 
@@ -59,6 +59,30 @@ const TOOL_DEFINITIONS = [
         content: { type: 'string' },
       },
       required: ['projectId', 'path', 'content'],
+    },
+  },
+  {
+    name: 'apply_patch',
+    description: 'Advanced: emit raw OT ops [{p,i?,d?}] against a doc at its current version. Each op must have exactly one of `i` (insert) or `d` (delete). For most use cases prefer write_doc.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        path: { type: 'string' },
+        ops: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              p: { type: 'integer', minimum: 0 },
+              i: { type: 'string' },
+              d: { type: 'string' },
+            },
+            required: ['p'],
+          },
+        },
+      },
+      required: ['projectId', 'path', 'ops'],
     },
   },
   {
@@ -116,6 +140,13 @@ export function registerAllTools(server: Server, ctx: ServerContext) {
             await handleWriteDoc(
               ctx,
               args as { projectId: string; path: string; content: string },
+            ),
+          )
+        case 'apply_patch':
+          return wrap(
+            await handleApplyPatch(
+              ctx,
+              args as { projectId: string; path: string; ops: Array<{ p: number; i?: string; d?: string }> },
             ),
           )
         case 'compile':

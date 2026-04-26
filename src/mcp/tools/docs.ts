@@ -1,5 +1,6 @@
 import type { ServerContext } from '../server.js'
-import { NotFoundError } from '../../errors.js'
+import { NotFoundError, OverleafError } from '../../errors.js'
+import type { OtOp } from '../../overleaf/diff.js'
 
 export async function handleReadDoc(
   ctx: ServerContext,
@@ -37,5 +38,30 @@ export async function handleWriteDoc(
     throw new NotFoundError(`No doc at ${input.path} in project ${input.projectId}`)
   }
   await engine.writeDoc(docId, input.content)
+  return { ok: true }
+}
+
+export async function handleApplyPatch(
+  ctx: ServerContext,
+  input: { projectId: string; path: string; ops: OtOp[] },
+): Promise<{ ok: true }> {
+  // Validate op shape — each op must have exactly one of i or d.
+  for (const op of input.ops) {
+    if (typeof op.p !== 'number' || op.p < 0) {
+      throw new OverleafError('OVERLEAF_GENERIC', 'Each op must have a numeric p ≥ 0')
+    }
+    const hasInsert = typeof op.i === 'string'
+    const hasDelete = typeof op.d === 'string'
+    if (hasInsert === hasDelete) {
+      throw new OverleafError('OVERLEAF_GENERIC', 'Each op must have exactly one of i or d')
+    }
+  }
+
+  const engine = await ctx.ot.get(input.projectId)
+  const docId = engine.pathToDocId(input.path)
+  if (docId === null) {
+    throw new NotFoundError(`No doc at ${input.path} in project ${input.projectId}`)
+  }
+  await engine.applyOps(docId, input.ops)
   return { ok: true }
 }

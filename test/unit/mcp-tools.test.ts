@@ -7,7 +7,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildContext } from '../../src/mcp/server.js'
 import { handleListProjects, handleGetProjectTree } from '../../src/mcp/tools/projects.js'
-import { handleReadDoc, handleReadFile, handleWriteDoc } from '../../src/mcp/tools/docs.js'
+import { handleReadDoc, handleReadFile, handleWriteDoc, handleApplyPatch } from '../../src/mcp/tools/docs.js'
 import {
   handleCompile,
   handleReadCompileLog,
@@ -177,6 +177,43 @@ describe('write_doc tool (OT)', () => {
     await expect(
       handleWriteDoc(ctx, { projectId: 'p1', path: 'figures.png', content: 'x' }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+})
+
+describe('apply_patch tool (raw OT ops)', () => {
+  it('emits applyOtUpdate with the user-provided ops', async () => {
+    const { ctx, sock } = buildOtTestCtx()
+    sock.respondToEmit('joinDoc', () => [null, ['hello'], 0, []])
+    sock.respondToEmit('applyOtUpdate', () => {
+      queueMicrotask(() => sock.simulate('otUpdateApplied', {
+        doc: 'd-main',
+        op: [{ p: 0, i: 'X' }],
+        v: 0,
+        meta: { source: 'pub-AGENT', ts: 0, user_id: 'u' },
+      }))
+      return [null]
+    })
+
+    const out = await handleApplyPatch(ctx, {
+      projectId: 'p1',
+      path: 'main.tex',
+      ops: [{ p: 0, i: 'X' }],
+    })
+    expect(out.ok).toBe(true)
+    const update = sock.emitsOf('applyOtUpdate')[0]!.args[1] as { op: unknown }
+    expect(update.op).toEqual([{ p: 0, i: 'X' }])
+  })
+
+  it('rejects ops with invalid shape', async () => {
+    const { ctx } = buildOtTestCtx()
+    await expect(
+      handleApplyPatch(ctx, {
+        projectId: 'p1',
+        path: 'main.tex',
+        // missing both i and d:
+        ops: [{ p: 0 }] as unknown as Array<{ p: number; i?: string; d?: string }>,
+      }),
+    ).rejects.toMatchObject({ code: 'OVERLEAF_GENERIC' })
   })
 })
 
