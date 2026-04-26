@@ -7,6 +7,7 @@ import type {
   ProjectEntity,
 } from './ot.types.js'
 import { OverleafError } from '../errors.js'
+import { computeOps, type OtOp } from './diff.js'
 
 /** Mirrors v0.1's TreeNode shape so MCP tool outputs stay stable. */
 export interface TreeNode {
@@ -53,6 +54,9 @@ export class OtEngine {
   private installedHandlers: Array<{ event: string; handler: (...args: unknown[]) => void }> = []
   private baselines = new Map<string, DocBaseline>()
   private inflightJoinDoc = new Map<string, Promise<DocBaseline>>()
+  /** Pending writes awaiting their otUpdateApplied echo. */
+  private pendingEchoes = new Map<string, Array<() => void>>()
+  private otUpdateAppliedHandlerInstalled = false
 
   constructor(opts: OtEngineOptions) {
     this.socket = opts.socket
@@ -179,6 +183,76 @@ export class OtEngine {
     this.baselines.delete(docId)
   }
 
+  /**
+   * Replace the doc's text with newContent via OT. Computes ops, emits
+   * applyOtUpdate, awaits ack + the matching otUpdateApplied echo, then
+   * bumps the baseline.
+   *
+   * If no baseline is cached, joinDoc is called first (lazy join).
+   */
+  async writeDoc(docId: string, newContent: string): Promise<void> {
+    let baseline = this.getBaseline(docId)
+    if (!baseline) {
+      baseline = await this.joinDoc(docId)
+    }
+    if (baseline.text === newContent) return // no-op
+    const ops = computeOps(baseline.text, newContent)
+    if (ops.length === 0) return
+    await this.applyOps(docId, ops)
+  }
+
+  /**
+   * Lower-level: emit raw OT ops at the current baseline version. The MCP
+   * `apply_patch` tool routes here.
+   */
+  async applyOps(docId: string, ops: OtOp[]): Promise<void> {
+    let baseline = this.getBaseline(docId)
+    if (!baseline) baseline = await this.joinDoc(docId)
+    this.ensureOtUpdateAppliedListener()
+
+    const update = {
+      doc: docId,
+      op: ops,
+      v: baseline.version,
+    }
+
+    // Wait for both the ack AND the otUpdateApplied echo for our publicId.
+    const echoPromise = new Promise<void>((resolve) => {
+      let arr = this.pendingEchoes.get(docId)
+      if (!arr) this.pendingEchoes.set(docId, arr = [])
+      arr.push(resolve)
+    })
+
+    await this.socket.emitWithAck('applyOtUpdate', docId, update)
+    await echoPromise
+
+    // Compute the new text from the ops we just sent (avoids depending on
+    // the echo carrying it back).
+    const stillBaseline = this.getBaseline(docId)
+    if (stillBaseline) {
+      stillBaseline.text = applyOpsLocal(stillBaseline.text, ops)
+      stillBaseline.version = baseline.version + 1
+    }
+  }
+
+  // ---- internals ----
+
+  /** Install the otUpdateApplied listener once. Filters by meta.source === publicId. */
+  private ensureOtUpdateAppliedListener(): void {
+    if (this.otUpdateAppliedHandlerInstalled) return
+    this.otUpdateAppliedHandlerInstalled = true
+    this.installListener('otUpdateApplied', (raw: unknown) => {
+      const update = raw as { doc?: string; meta?: { source?: string } }
+      if (!update.doc) return
+      // Only echoes from our own client mark a write as complete.
+      if (update.meta?.source !== this._publicId) return
+      const arr = this.pendingEchoes.get(update.doc)
+      if (!arr || arr.length === 0) return
+      const resolver = arr.shift()!
+      resolver()
+    })
+  }
+
   /** Disconnect socket, flush handlers. */
   disconnect(): void {
     for (const { event, handler } of this.installedHandlers) {
@@ -241,4 +315,29 @@ export class OtEngine {
  */
 function decodeLatin1Lines(lines: string[]): string {
   return lines.map((line) => Buffer.from(line, 'latin1').toString('utf-8')).join('\n')
+}
+
+/**
+ * Apply ops to text locally to derive the post-update baseline. Mirrors what
+ * the server will do; we use this (instead of waiting for the server to
+ * echo back the resulting text) because Overleaf's otUpdateApplied
+ * broadcasts only carry the op + version, not the resulting text.
+ */
+function applyOpsLocal(text: string, ops: OtOp[]): string {
+  let out = text
+  for (const op of ops) {
+    if (op.i !== undefined) {
+      out = out.slice(0, op.p) + op.i + out.slice(op.p)
+    } else if (op.d !== undefined) {
+      const slice = out.slice(op.p, op.p + op.d.length)
+      if (slice !== op.d) {
+        // Shouldn't happen — computeOps always emits exact-byte deletes —
+        // but if it does we leave the doc unchanged rather than corrupt it.
+        // The server-side ack would also reject in this case.
+        return text
+      }
+      out = out.slice(0, op.p) + out.slice(op.p + op.d.length)
+    }
+  }
+  return out
 }
