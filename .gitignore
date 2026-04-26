@@ -148,3 +148,9 @@ vite.config.ts.timestamp-*
 .DS_Store
 .worktrees/
 
+# Claude Code per-user state (permission allow-lists, cron lock).
+# Shared project settings (.claude/settings.json) and MCP wiring (.mcp.json
+# at repo root) STAY tracked.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
