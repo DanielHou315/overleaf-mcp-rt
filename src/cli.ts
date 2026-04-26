@@ -124,21 +124,32 @@ export async function runDiagnose(
 
   // Step 5: OT handshake
   if (!options.skipOt && projectId) {
+    let engine: OtEngine | undefined
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
     try {
       const sock = new OverleafSocket({ url: cfg.url, projectId, sessionCookie: cfg.sessionCookie, extraHeaders: cfg.extraHeaders })
-      const engine = new OtEngine({ socket: sock, projectId })
+      engine = new OtEngine({ socket: sock, projectId })
       await Promise.race([
         engine.connect(),
-        new Promise((_, reject) => setTimeout(() => reject(new OverleafError('OVERLEAF_GENERIC', 'OT handshake timeout 8s')), 8000)),
+        new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(
+            () => reject(new OverleafError('OVERLEAF_GENERIC', 'OT handshake timeout 8s')),
+            8000,
+          )
+        }),
       ])
       steps.push({ name: 'OT handshake', status: 'ok', detail: `publicId ${engine.publicId}` })
       writeLine(`✓ OT handshake — publicId ${engine.publicId}`)
-      engine.disconnect()
     } catch (err) {
       ok = false
       const msg = err instanceof OverleafError ? `${err.code}: ${err.message}` : String((err as Error).message ?? err)
       steps.push({ name: 'OT handshake', status: 'fail', detail: msg })
       writeLine(`✗ OT handshake — ${msg}`)
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle)
+      if (engine) {
+        try { engine.disconnect() } catch { /* engine may have failed to start */ }
+      }
     }
   }
 
