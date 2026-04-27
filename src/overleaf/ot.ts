@@ -297,7 +297,7 @@ export class OtEngine {
 
   /**
    * Lower-level: emit raw OT ops at the current baseline version. The MCP
-   * `apply_patch` tool routes here.
+   * `overleaf_edit_doc` tool's `raw_ops` mode routes here.
    */
   async applyOps(docId: string, ops: OtOp[]): Promise<void> {
     // Chain onto any in-flight write for the same docId so concurrent

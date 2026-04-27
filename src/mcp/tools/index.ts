@@ -5,7 +5,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import type { ServerContext } from '../server.js'
 import { handleListProjects, handleGetProjectTree } from './projects.js'
-import { handleReadDoc, handleReadFile, handleWriteDoc, handleApplyPatch } from './docs.js'
+import { handleReadDoc, handleReadFile, handleWriteDoc } from './docs.js'
 import { handleEditDoc } from './edit.js'
 import { handleReadDocRange } from './range.js'
 import { handleCompile, handleReadCompileLog, handleDownloadPdf } from './compile.js'
@@ -21,15 +21,21 @@ import { OverleafError } from '../../errors.js'
 import type { DownloadPdfResult } from './compile.js'
 import { effectiveMime } from './mime.js'
 
+// All MCP tool names are prefixed `overleaf_*` so they remain unambiguous in
+// hosts that don't auto-namespace by server name (Cursor, Continue, custom
+// stdio integrations, etc.). Claude Code's `mcp__<server>__<tool>` namespacing
+// applies on top — `overleaf_edit_doc` becomes `mcp__overleaf__overleaf_edit_doc`
+// in that host. Cosmetic redundancy there is the cost of robust naming
+// elsewhere.
 const TOOL_DEFINITIONS = [
   {
-    name: 'list_projects',
+    name: 'overleaf_list_projects',
     description: 'List Overleaf projects accessible to the configured account.',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
-    name: 'get_project_tree',
-    description: 'Return the file/folder tree of a project.',
+    name: 'overleaf_get_project_tree',
+    description: 'Return the file/folder tree of an Overleaf project.',
     inputSchema: {
       type: 'object',
       properties: { projectId: { type: 'string' } },
@@ -37,8 +43,8 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'read_doc',
-    description: 'Read a text document by path within a project.',
+    name: 'overleaf_read_doc',
+    description: 'Read a text document by path within an Overleaf project.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -49,8 +55,8 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'read_doc_range',
-    description: 'Read a substring of a text doc by line range (startLine/endLine, 1-indexed inclusive) or by offset/length. Returns totalLines and totalChars for context.',
+    name: 'overleaf_read_doc_range',
+    description: 'Read a substring of an Overleaf doc by line range (startLine/endLine, 1-indexed inclusive) or by offset/length. Returns totalLines and totalChars for context. Use to verify a small region after an edit instead of re-fetching the whole doc.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -65,8 +71,8 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'read_file',
-    description: 'Read a binary file by path within a project. Default (as=auto): returns native MCP image content for image MIMEs, text content for text MIMEs, resource for PDFs, and a {contentBase64,mimeType} envelope for other binary types. Pass as="base64" to force the {contentBase64,mimeType} envelope for all types — useful when you need programmatic access to the bytes (e.g. to copy a binary between paths via upload_file).',
+    name: 'overleaf_read_file',
+    description: 'Read a binary file by path within an Overleaf project. Default (as=auto): returns native MCP image content for image MIMEs, text content for text MIMEs, resource for PDFs, and a {contentBase64,mimeType} envelope for other binary types. Pass as="base64" to force the {contentBase64,mimeType} envelope for all types — useful when you need programmatic access to the bytes (e.g. to copy a binary between paths via overleaf_upload_file).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -78,8 +84,8 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'write_doc',
-    description: 'Replace a text doc by path. Edits flow as live OT ops; collaborators see fine-grained changes, not a "file changed externally" toast. Returns a summary {versionBefore, versionAfter, charsBefore, charsAfter, charsDelta, opsApplied}. For surgical edits prefer edit_doc.',
+    name: 'overleaf_write_doc',
+    description: 'Replace an Overleaf text doc by path. Edits flow as live OT ops; collaborators see fine-grained changes, not a "file changed externally" toast. Returns a summary {versionBefore, versionAfter, charsBefore, charsAfter, charsDelta, opsApplied}. For surgical edits prefer overleaf_edit_doc.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -91,32 +97,8 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'apply_patch',
-    description: 'Advanced: emit raw OT ops [{p,i?,d?}] against a doc. Each op must have exactly one of `i` (insert) or `d` (delete); a `d`-string that does not match the doc at p surfaces as OT_DELETE_MISMATCH. For most use cases prefer edit_doc, which resolves anchors → OT positions for you. apply_patch is here for callers that already have positions computed.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        projectId: { type: 'string' },
-        path: { type: 'string' },
-        ops: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              p: { type: 'integer', minimum: 0 },
-              i: { type: 'string' },
-              d: { type: 'string' },
-            },
-            required: ['p'],
-          },
-        },
-      },
-      required: ['projectId', 'path', 'ops'],
-    },
-  },
-  {
-    name: 'edit_doc',
-    description: 'High-level text edits with anchor-based find/replace, insert before/after, line-range replace, or raw OT ops. All edits in one call apply atomically (all or none). Pass dryRun=true to preview without applying. For most edits prefer this over apply_patch — the server resolves anchors → OT positions for you.',
+    name: 'overleaf_edit_doc',
+    description: 'The recommended editing surface for Overleaf docs. Six edit modes: replace (anchor-based find/replace with unique/first/all/Nth occurrence semantics), insert_before, insert_after, replace_lines, unified_diff (LLMs emit this format fluently), and raw_ops (caller-supplied OT ops). All edits in one call apply atomically — if any one fails to resolve, none apply. Pass dryRun=true to preview the resolved OT ops without applying. The server resolves anchors → OT positions for you and pre-validates ops against the local baseline before emit, so a wrong offset surfaces as OT_DELETE_MISMATCH immediately rather than silently no-opping.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -206,8 +188,8 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'compile',
-    description: 'Trigger a LaTeX compile and return output URLs.',
+    name: 'overleaf_compile',
+    description: 'Trigger a LaTeX compile of an Overleaf project and return output URLs.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -219,8 +201,8 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'read_compile_log',
-    description: 'Compile and return the output.log contents.',
+    name: 'overleaf_read_compile_log',
+    description: 'Compile an Overleaf project and return the output.log contents.',
     inputSchema: {
       type: 'object',
       properties: { projectId: { type: 'string' } },
@@ -228,8 +210,8 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'download_pdf',
-    description: 'Compile and return the output.pdf as an MCP resource (mimeType: application/pdf, base64-encoded blob).',
+    name: 'overleaf_download_pdf',
+    description: 'Compile an Overleaf project and return the output.pdf as an MCP resource (mimeType: application/pdf, base64-encoded blob).',
     inputSchema: {
       type: 'object',
       properties: { projectId: { type: 'string' } },
@@ -237,8 +219,8 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'create_doc',
-    description: 'Create a new text doc under parentPath. Optional content is OT-written after creation. Use parentPath="" for the project root.',
+    name: 'overleaf_create_doc',
+    description: 'Create a new text doc in an Overleaf project under parentPath. Optional content is OT-written after creation. Use parentPath="" for the project root.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -251,8 +233,8 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'create_folder',
-    description: 'Create a new folder under parentPath. Use parentPath="" for the project root.',
+    name: 'overleaf_create_folder',
+    description: 'Create a new folder in an Overleaf project under parentPath. Use parentPath="" for the project root.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -264,8 +246,8 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'upload_file',
-    description: 'Upload a binary file (base64) under parentPath. mimeType is optional — when omitted, inferred from the path extension (png/jpg/pdf/etc); fallback is application/octet-stream. Overleaf may auto-promote text MIME types to docs.',
+    name: 'overleaf_upload_file',
+    description: 'Upload a binary file (base64) to an Overleaf project under parentPath. mimeType is optional — when omitted, inferred from the path extension (png/jpg/pdf/etc); fallback is application/octet-stream. Overleaf may auto-promote text MIME types to docs.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -279,8 +261,8 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'rename',
-    description: 'Rename a doc/file/folder at path to newName.',
+    name: 'overleaf_rename',
+    description: 'Rename an Overleaf doc/file/folder at path to newName.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -292,8 +274,8 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'move',
-    description: 'Move a doc/file/folder at path under newParentPath. Use newParentPath="" for the project root.',
+    name: 'overleaf_move',
+    description: 'Move an Overleaf doc/file/folder at path under newParentPath. Use newParentPath="" for the project root.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -305,8 +287,8 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'delete_entity',
-    description: 'Delete the doc/file/folder at path.',
+    name: 'overleaf_delete_entity',
+    description: 'Delete the doc/file/folder at path within an Overleaf project.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -327,74 +309,67 @@ export function registerAllTools(server: Server, ctx: ServerContext) {
     const { name, arguments: args = {} } = req.params
     try {
       switch (name) {
-        case 'list_projects':
+        case 'overleaf_list_projects':
           return wrap(await handleListProjects(ctx, args as Record<string, never>))
-        case 'get_project_tree':
+        case 'overleaf_get_project_tree':
           return wrap(await handleGetProjectTree(ctx, args as { projectId: string }))
-        case 'read_doc':
+        case 'overleaf_read_doc':
           return wrap(await handleReadDoc(ctx, args as { projectId: string; path: string }))
-        case 'read_doc_range':
+        case 'overleaf_read_doc_range':
           return wrap(
             await handleReadDocRange(
               ctx,
               args as { projectId: string; path: string; startLine?: number; endLine?: number; startOffset?: number; length?: number },
             ),
           )
-        case 'read_file': {
+        case 'overleaf_read_file': {
           const args2 = args as { projectId: string; path: string; as?: 'auto' | 'base64' }
           const result = await handleReadFile(ctx, args2)
           return formatBinaryFile(result, args2.projectId, args2.path, args2.as ?? 'auto')
         }
-        case 'write_doc':
+        case 'overleaf_write_doc':
           return wrap(
             await handleWriteDoc(
               ctx,
               args as { projectId: string; path: string; content: string },
             ),
           )
-        case 'apply_patch':
-          return wrap(
-            await handleApplyPatch(
-              ctx,
-              args as { projectId: string; path: string; ops: Array<{ p: number; i?: string; d?: string }> },
-            ),
-          )
-        case 'edit_doc':
+        case 'overleaf_edit_doc':
           return wrap(
             await handleEditDoc(
               ctx,
               args as unknown as Parameters<typeof handleEditDoc>[1],
             ),
           )
-        case 'compile':
+        case 'overleaf_compile':
           return wrap(
             await handleCompile(
               ctx,
               args as { projectId: string; draft?: boolean; stopOnFirstError?: boolean },
             ),
           )
-        case 'read_compile_log':
+        case 'overleaf_read_compile_log':
           return wrap(await handleReadCompileLog(ctx, args as { projectId: string }))
-        case 'download_pdf': {
+        case 'overleaf_download_pdf': {
           const args2 = args as { projectId: string }
           const result = await handleDownloadPdf(ctx, args2)
           return formatPdf(result, args2.projectId)
         }
-        case 'create_doc':
+        case 'overleaf_create_doc':
           return wrap(
             await handleCreateDoc(
               ctx,
               args as { projectId: string; parentPath: string; name: string; content?: string },
             ),
           )
-        case 'create_folder':
+        case 'overleaf_create_folder':
           return wrap(
             await handleCreateFolder(
               ctx,
               args as { projectId: string; parentPath: string; name: string },
             ),
           )
-        case 'upload_file':
+        case 'overleaf_upload_file':
           return wrap(
             await handleUploadFile(
               ctx,
@@ -407,21 +382,21 @@ export function registerAllTools(server: Server, ctx: ServerContext) {
               },
             ),
           )
-        case 'rename':
+        case 'overleaf_rename':
           return wrap(
             await handleRename(
               ctx,
               args as { projectId: string; path: string; newName: string },
             ),
           )
-        case 'move':
+        case 'overleaf_move':
           return wrap(
             await handleMove(
               ctx,
               args as { projectId: string; path: string; newParentPath: string },
             ),
           )
-        case 'delete_entity':
+        case 'overleaf_delete_entity':
           return wrap(
             await handleDeleteEntity(
               ctx,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { handleWriteDoc, handleApplyPatch } from '../../src/mcp/tools/docs.js'
+import { handleWriteDoc } from '../../src/mcp/tools/docs.js'
 import type { ServerContext } from '../../src/mcp/server.js'
 
 function makeCtx(initial: string) {
@@ -60,15 +60,3 @@ describe('write_doc summary', () => {
   })
 })
 
-describe('apply_patch summary', () => {
-  it('reports charsDelta from inserts/deletes', async () => {
-    const harness = makeCtx('hello world')
-    const out = await handleApplyPatch(harness.ctx, {
-      projectId: 'p', path: 'a.tex',
-      ops: [{ p: 5, i: ' lovely' }],
-    })
-    expect(out.ok).toBe(true)
-    expect(out.summary?.charsDelta).toBe(7)
-    expect(out.summary?.opsApplied).toBe(1)
-  })
-})
