@@ -32,6 +32,7 @@
   "files": [
     "dist",
     "patches",
+    "scripts",
     "README.md",
     "LICENSE"
   ],
@@ -43,7 +44,7 @@
     "test:integration": "RUN_INTEGRATION=1 vitest run --config vitest.integration.config.ts",
     "start": "node dist/cli.js",
     "prepublishOnly": "npm run build && npm test",
-    "postinstall": "patch-package"
+    "postinstall": "node scripts/postinstall.cjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
