@@ -3,6 +3,7 @@ import { writeFileSync, mkdirSync, chmodSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { realpathSync } from 'node:fs'
 import { createInterface } from 'node:readline/promises'
 import { stdin as input, stdout as output, stderr } from 'node:process'
 import { loadConfig } from './config.js'
@@ -276,8 +277,18 @@ async function runLogin(argv: string[]) {
   rl.close()
 }
 
-const invokedAsScript = process.argv[1] !== undefined
-  && import.meta.url === pathToFileURL(process.argv[1]).href
+// Resolve symlinks on both sides — npm's bin shim and OS-level symlinks
+// (macOS /tmp → /private/tmp, npm bin/ links) make a literal string compare
+// of import.meta.url vs argv[1] flaky.
+const invokedAsScript = (() => {
+  const argv1 = process.argv[1]
+  if (!argv1) return false
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(argv1)).href
+  } catch {
+    return import.meta.url === pathToFileURL(argv1).href
+  }
+})()
 
 if (invokedAsScript) {
   main().catch((err: unknown) => {

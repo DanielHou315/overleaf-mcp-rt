@@ -1,6 +1,6 @@
 {
   "name": "overleaf-mcp-rt",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Real-time MCP server for self-hosted Overleaf Community Edition. Lets AI coding agents read, write, and compile LaTeX projects via Overleaf's native operational-transform pipeline — no git-bridge or Server Pro required. The 'rt' is for real-time, distinct from git-bridge-style integrations.",
   "license": "AGPL-3.0-or-later",
   "author": "Daniel Hou (https://github.com/DanielHou315)",
@@ -31,34 +31,30 @@
   },
   "files": [
     "dist",
-    "patches",
-    "scripts",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/build.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "test:integration": "RUN_INTEGRATION=1 vitest run --config vitest.integration.config.ts",
     "start": "node dist/cli.js",
-    "prepublishOnly": "npm run build && npm test",
-    "postinstall": "node scripts/postinstall.cjs"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "diff": "^9.0.0",
-    "fast-diff": "^1.3.0",
-    "node-html-parser": "^7.0.0",
-    "patch-package": "^8.0.1",
-    "socket.io-client": "github:overleaf/socket.io-client#0.9.17-overleaf-5"
+    "prepublishOnly": "npm run build && npm test"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "@types/diff": "^7.0.2",
     "@types/fast-diff": "^1.2.2",
     "@types/node": "^20.0.0",
+    "diff": "^9.0.0",
+    "esbuild": "^0.28.0",
+    "fast-diff": "^1.3.0",
     "msw": "^2.4.0",
+    "node-html-parser": "^7.0.0",
+    "patch-package": "^8.0.1",
+    "socket.io-client": "github:overleaf/socket.io-client#0.9.17-overleaf-5",
     "typescript": "^5.5.0",
     "vitest": "^2.1.0"
   },
