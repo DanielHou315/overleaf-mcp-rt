@@ -165,6 +165,8 @@ export async function startAgent(target: Target): Promise<Agent> {
       OVERLEAF_SESSION_COOKIE: target.sessionCookie,
       OVERLEAF_EXTRA_HEADERS: JSON.stringify(target.extraHeaders),
       OVERLEAF_CREDENTIALS_FILE: join(root, 'test', 'live', '.no-credentials-file'),
+      // history-ot docs are read-only unless the user opts in; the suite is that user.
+      OVERLEAF_HISTORY_OT_WRITES: '1',
     },
     stderr: 'inherit',
   }))
@@ -199,7 +201,7 @@ export interface Human {
 export async function joinAsHuman(target: Target): Promise<Human> {
   const cookie = target.stickyCookies ? `${target.sessionCookie}; ${target.stickyCookies}` : target.sessionCookie
   const socket = new OverleafSocket({ url: target.url, projectId: target.projectId, sessionCookie: cookie, extraHeaders: target.extraHeaders })
-  const human: Human = { engine: new OtEngine({ socket, projectId: target.projectId }), otErrors: [], disconnects: 0, close: () => human.engine.disconnect() }
+  const human: Human = { engine: new OtEngine({ socket, projectId: target.projectId, historyOtWrites: true }), otErrors: [], disconnects: 0, close: () => human.engine.disconnect() }
   socket.on('otUpdateError', (...args) => human.otErrors.push(args))
   socket.on('disconnect', () => { human.disconnects += 1 })
   await human.engine.connect()

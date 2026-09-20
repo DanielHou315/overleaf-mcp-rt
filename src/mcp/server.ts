@@ -24,6 +24,8 @@ export interface ContextOptions {
   debug: boolean
   /** Load-balancer stickiness cookies to send on the Socket.IO connection (see fetchStickyCookies). */
   stickyCookies?: string
+  /** Allow writes to history-ot docs. Default: the OVERLEAF_HISTORY_OT_WRITES=1 opt-in. */
+  historyOtWrites?: boolean
 }
 
 export function buildContext(opts: ContextOptions): ServerContext {
@@ -47,6 +49,7 @@ export function buildContext(opts: ContextOptions): ServerContext {
     return {
       socket: makeSocket(),
       socketFactory: makeSocket,
+      historyOtWrites: opts.historyOtWrites ?? process.env.OVERLEAF_HISTORY_OT_WRITES === '1',
     }
   }
   const ot = new OtEngineRegistry(otFactory)

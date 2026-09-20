@@ -218,8 +218,14 @@ export class FakeOverleaf {
   }
 }
 
-export async function connectEngine(server: FakeOverleaf): Promise<OtEngine> {
-  const engine = new OtEngine({ socket: server.sock, projectId: 'p1', writeConfirmTimeoutMs: 200 })
+export async function connectEngine(
+  server: FakeOverleaf,
+  opts: { historyOtWrites?: boolean } = {},
+): Promise<OtEngine> {
+  // Tests exercise history-ot writes unless they are about the opt-in itself.
+  const engine = new OtEngine({
+    socket: server.sock, projectId: 'p1', writeConfirmTimeoutMs: 200, historyOtWrites: opts.historyOtWrites ?? true,
+  })
   const connecting = engine.connect()
   server.sock.simulate('connectionAccepted', null, 'pub-AGENT')
   server.sock.simulate('joinProjectResponse', server.joinResponse())

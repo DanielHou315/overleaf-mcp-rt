@@ -9,7 +9,9 @@ import type {
   JoinProjectResponse,
   ProjectEntity,
 } from './ot.types.js'
-import { CommentsUnsupportedError, NetworkError, OverleafError } from '../errors.js'
+import {
+  CommentsUnsupportedError, HistoryOtMismatchError, HistoryOtWritesDisabledError, NetworkError, OverleafError,
+} from '../errors.js'
 import { computeOps, sanitizeOps, type OtOp } from './diff.js'
 import {
   decodeEditOperations, isAscending, isRawStringFileData, toTextOperation, transformInFlight, type OtType,
@@ -122,6 +124,13 @@ export interface OtEngineOptions {
   joinTimeoutMs?: number
   /** How long to wait for the project handshake in connect() (default 20s). */
   connectTimeoutMs?: number
+  /**
+   * Allow writes to history-ot docs (default false: they are read-only). The
+   * format is verified against Community Edition but not against overleaf.com,
+   * and a write the server rejects disconnects everyone in the doc — so it is
+   * the user's call (OVERLEAF_HISTORY_OT_WRITES=1).
+   */
+  historyOtWrites?: boolean
 }
 
 /**
@@ -180,6 +189,11 @@ export class OtEngine {
   private readonly writeConfirmTimeoutMs: number
   private readonly joinTimeoutMs: number
   private readonly connectTimeoutMs: number
+  private readonly historyOtWrites: boolean
+  /** history-ot docs whose first write has been checked against a fresh server snapshot. */
+  private readonly historyOtVerified = new Set<string>()
+  /** Set once a check failed: our idea of this server's history-ot is wrong, so stop writing it. */
+  private historyOtMismatch: HistoryOtMismatchError | null = null
 
   constructor(opts: OtEngineOptions) {
     this.currentSocket = opts.socket
@@ -192,6 +206,7 @@ export class OtEngine {
     this.writeConfirmTimeoutMs = opts.writeConfirmTimeoutMs ?? 15_000
     this.joinTimeoutMs = opts.joinTimeoutMs ?? 15_000
     this.connectTimeoutMs = opts.connectTimeoutMs ?? 20_000
+    this.historyOtWrites = opts.historyOtWrites ?? false
   }
 
   get publicId(): string | null { return this._publicId }
@@ -573,6 +588,10 @@ export class OtEngine {
     // (For history-ot this is not cosmetic: the server *rejects* an insert containing a surrogate.)
     let { ops, replaced: unstorableCodeUnits } = sanitizeOps(build(textBefore))
     const historyOt = baseline.otType === 'history-ot'
+    if (historyOt && ops.length > 0) {
+      if (this.historyOtMismatch) throw this.historyOtMismatch
+      if (!this.historyOtWrites) throw new HistoryOtWritesDisabledError({ docId })
+    }
     if (historyOt) {
       if (ops.some((op) => op.c !== undefined)) {
         throw new CommentsUnsupportedError(
@@ -617,7 +636,8 @@ export class OtEngine {
 
     // handleOwnAck normally leaves a fresh snapshot behind; if it had to drop
     // it (missed updates), rejoin for the authoritative text.
-    const after = this.baselines.get(docId) ?? (await this.joinDoc(docId))
+    let after = this.baselines.get(docId) ?? (await this.joinDoc(docId))
+    if (historyOt && !this.historyOtVerified.has(docId)) after = await this.verifyHistoryOtWrite(docId, after)
     this.markSeen(docId, after.text, after.version)
     return {
       textBefore,
@@ -627,6 +647,31 @@ export class OtEngine {
       ops,
       unstorableCodeUnits,
     }
+  }
+
+  /**
+   * First write to a history-ot doc: compare what we think the doc is now with
+   * a fresh snapshot from the server. Everything else in this engine is a
+   * prediction; on a server whose history-ot differs from the one this was
+   * built against, a wrong prediction would otherwise stay invisible (same
+   * length, different text) and compound. One extra joinDoc per doc per session.
+   */
+  private async verifyHistoryOtWrite(docId: string, predicted: DocBaseline): Promise<DocBaseline> {
+    const expected = { text: predicted.text, version: predicted.version }
+    this.baselines.delete(docId)
+    const fresh = await this.joinDoc(docId)
+    if (fresh.version !== expected.version) return fresh // someone typed in between: can't compare, try again next write
+    if (fresh.text === expected.text) {
+      this.historyOtVerified.add(docId)
+      return fresh
+    }
+    this.historyOtMismatch = new HistoryOtMismatchError(
+      'After writing, Overleaf\'s copy of the document differs from what was expected, so this tool\'s handling of the newer document format (history-OT) does not match this server. ' +
+        'The write itself was accepted and the document is as Overleaf stored it — re-read it. Further writes to history-OT documents are refused for this session.',
+      { docId, version: fresh.version },
+    )
+    this.markSeen(docId, fresh.text, fresh.version)
+    throw this.historyOtMismatch
   }
 
   /**
@@ -1039,6 +1084,7 @@ export class OtEngine {
 export type OtEngineFactory = (projectId: string) => {
   socket: SocketLike
   socketFactory?: () => SocketLike
+  historyOtWrites?: boolean
   reconnectInitialDelayMs?: number
   reconnectMaxAttempts?: number
 }
