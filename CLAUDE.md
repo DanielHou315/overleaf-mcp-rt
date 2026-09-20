@@ -17,7 +17,7 @@ Agent edits travel as live operational-transform (OT) ops from a logged-in accou
 
 - **No fork of `sharelatex/sharelatex`.** Anything that requires modifying the Overleaf image is out of scope; users must be able to upgrade Overleaf cleanly.
 - **AGPL-3.0-or-later** for everything we ship, because the auth and OT client are ported from [Overleaf-Workshop](https://github.com/iamhyc/Overleaf-Workshop) (AGPL-3.0). `src/overleaf/text-ot.ts` is a port of Overleaf's ShareJS `text` type (MIT upstream); keep the attribution headers.
-- **Stock Overleaf CE 3.x – 6.x**, with 6.x the primary target, plus overleaf.com. Features that only exist in Server Pro / overleaf.com (comments) must detect their absence and fail cleanly on CE before changing anything.
+- **Stock Overleaf CE 4.x – 6.x**, with 6.x the primary target, plus overleaf.com. The supported range is what the live matrix (`test/live/versions.conf`) passes on; 3.x was dropped when the matrix showed it never worked (older real-time handshake). Features that only exist in Server Pro / overleaf.com (comments) must detect their absence and fail cleanly on CE before changing anything.
 - **Reverse-proxy auth pass-through** (Cloudflare Access, basic auth, …) via configurable HTTP headers, applied to both REST and the Socket.IO handshake.
 - **Never disturb a human's editing session.** Overleaf's real-time service answers a rejected op by disconnecting *every* client on that doc. Any change to the OT path needs a test in `test/unit/ot.live-sync.test.ts` and, ideally, a live run with a browser open (see Testing).
 - **Credentials are the user's.** Never log, print or read back session cookies; login flows are run by the user.

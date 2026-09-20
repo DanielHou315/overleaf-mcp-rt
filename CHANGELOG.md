@@ -22,9 +22,13 @@ All found by the new live test suite running against real Overleaf servers.
 - README leads with support for both self-hosted Overleaf (Community Edition / Server Pro) and overleaf.com, with a new *Supported Overleaf servers* table and a short recording of an agent and a person editing the same file.
 
 
+### Changed
+
+- **Supported Community Edition range is now 4.x – 6.x** (was declared as 3.x – 6.x). The new version matrix showed that 3.x never worked: its real-time service predates the join-on-connect handshake this client uses, so the connection never completes (tested with 3.5.13). 4.2, 5.5, 6.0 and 6.3 pass the full live suite.
+
 ### Testing
 
-- **Live test suite and Community Edition version matrix** (`test/live/`). `run-matrix.sh` starts a throw-away Overleaf CE for each supported major (3.5, 4.2, 5.5, 6.0, 6.3), runs the built server against it over stdio — tools, string edits with non-ASCII text, an agent editing while a second client types in the same line, write guards, uploads, compile, comments — checks the server's own logs for OT errors, and removes every container, volume, network and pulled image. The instances publish no ports and live on an internal Docker network. The same suite runs against a configured host (`LIVE_HOST=overleaf.com npm run test:live`). Replaces the old `test/integration` scaffold, which published a port and needed a hand-made account.
+- **Live test suite and Community Edition version matrix** (`test/live/`). `run-matrix.sh` starts a throw-away Overleaf CE for each supported release line (4.2, 5.5, 6.0, 6.3), runs the built server against it over stdio — tools, string edits with non-ASCII text, an agent editing while a second client types in the same line, write guards, uploads, compile, comments — checks the server's own logs for OT errors, and removes every container, volume, network and pulled image. The instances publish no ports and live on an internal Docker network. The same suite runs against a configured host (`LIVE_HOST=overleaf.com npm run test:live`). Replaces the old `test/integration` scaffold, which published a port and needed a hand-made account.
 
 ## [2.0.0] — 2026-09-20
 

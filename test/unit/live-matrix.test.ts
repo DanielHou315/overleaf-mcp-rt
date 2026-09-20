@@ -65,7 +65,7 @@ describe('live matrix isolation', () => {
       // 5.0 renamed every SHARELATEX_* variable and refuses to start with the old names.
       expect(envFile).toBe(Number(version.split('.')[0]) >= 5 ? 'env.overleaf' : 'env.sharelatex')
     }
-    expect(new Set(rows.map((r) => r[0]!.split('.')[0]))).toEqual(new Set(['6', '5', '4', '3']))
+    expect(new Set(rows.map((r) => r[0]!.split('.')[0]))).toEqual(new Set(['6', '5', '4']))
   })
 
   it('tears down on every exit path and only removes images it pulled itself', () => {

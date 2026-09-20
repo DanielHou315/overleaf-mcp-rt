@@ -44,7 +44,7 @@ For each version it starts Overleaf + Mongo + Redis (failing within seconds, wit
 - **No build cache.** Nothing is built — only stock images are run, and dependencies are installed into a volume that is deleted with the rest. The script compares the host's build-cache size before and after and says so. It never runs any `docker … prune`, which would touch things that aren't ours.
 - The checkout is mounted **read-only**; the run writes nothing into it.
 
-`versions.conf` lists the versions (newest patch of each supported major) with the Mongo/Redis each needs. Adding a release is one line.
+`versions.conf` lists the versions (newest patch of each supported major) with the Mongo/Redis each needs. Adding a release is one line. It is also the definition of "supported": 3.x was dropped from the project's claims when this matrix showed the real-time connection never completes against 3.5.13 (an older handshake).
 
 ## 2. A configured host (overleaf.com, or your own server)
 
