@@ -20,10 +20,12 @@
     "latex",
     "operational-transform",
     "real-time",
-    "claude",
     "claude-code",
     "ai",
-    "anthropic"
+    "cursor",
+    "codex",
+    "agent-skills",
+    "plugin"
   ],
   "type": "module",
   "bin": {

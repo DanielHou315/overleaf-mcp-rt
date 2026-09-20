@@ -1,0 +1,41 @@
+name: Release
+
+# Pushing a tag vX.Y.Z publishes that version to npm and creates the GitHub
+# release from its CHANGELOG.md section. See "Releasing" in CLAUDE.md / AGENTS.md.
+# Requires the repository secret NPM_TOKEN (an npm automation token).
+on:
+  push:
+    tags: ['v*.*.*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - name: Tag must match package.json
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $version" >&2
+            exit 1
+          fi
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Release notes from CHANGELOG.md
+        run: node scripts/changelog-section.mjs > "$RUNNER_TEMP/notes.md"
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md"
+        env:
+          GH_TOKEN: ${{ github.token }}

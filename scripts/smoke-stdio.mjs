@@ -6,6 +6,8 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 const [tool = 'overleaf_list_projects', rawArgs = '{}'] = process.argv.slice(2)
 const client = new Client({ name: 'smoke', version: '0' }, { capabilities: {} })
 await client.connect(new StdioClientTransport({ command: 'node', args: ['dist/cli.js'] }))
+const server = client.getServerVersion()
+console.log(`server: ${server?.name} ${server?.version}`)
 const { tools } = await client.listTools()
 console.log(`${tools.length} tools: ${tools.map((t) => t.name).join(', ')}`)
 const res = await client.callTool({ name: tool, arguments: JSON.parse(rawArgs) })

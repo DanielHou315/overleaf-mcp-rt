@@ -108,7 +108,9 @@ const installedBrowser = (() => {
   try { return findBrowser() } catch { return null }
 })()
 
-describe.skipIf(!installedBrowser)('browserLogin (real headless browser)', () => {
+// CI runners have Chrome, but its sandbox is unreliable there (AppArmor blocks
+// unprivileged user namespaces on recent Ubuntu images); run this one locally.
+describe.skipIf(!installedBrowser || !!process.env.CI)('browserLogin (real headless browser)', () => {
   it('launches the browser, reads the HttpOnly session cookie over DevTools, and cleans up its profile', async () => {
     const profilesBefore = readdirSync(tmpdir()).filter((d) => d.startsWith('overleaf-mcp-login-'))
     // The page "submits the login form" by itself after a moment, standing in for the user.

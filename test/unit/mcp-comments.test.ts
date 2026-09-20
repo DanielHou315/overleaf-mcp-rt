@@ -41,13 +41,13 @@ const base = { projectId: 'p1', path: 'main.tex' }
 
 describe('signComment', () => {
   it('ends the comment with "Co-authored by <agent>"', () => {
-    expect(signComment('Is this right?  \n', 'Claude')).toBe('Is this right?\n\nCo-authored by Claude')
+    expect(signComment('Is this right?  \n', 'Quill')).toBe('Is this right?\n\nCo-authored by Quill')
   })
   it('does not sign twice when the model already wrote the line', () => {
-    expect(signComment('Looks good.\n\nco-authored by Claude', 'Claude')).toBe('Looks good.\n\nco-authored by Claude')
+    expect(signComment('Looks good.\n\nco-authored by Quill', 'Quill')).toBe('Looks good.\n\nco-authored by Quill')
   })
   it('skips the signature only when explicitly told to, and insists on a name otherwise', () => {
-    expect(signComment('Unsigned.', 'Claude', true)).toBe('Unsigned.')
+    expect(signComment('Unsigned.', 'Quill', true)).toBe('Unsigned.')
     expect(() => signComment('x', '  ')).toThrow(/agentName is required/)
   })
 })
@@ -56,11 +56,11 @@ describe('overleaf_add_comment', () => {
   it('creates the thread, then anchors it to the text with a comment op — and leaves the text alone', async () => {
     const h = await harness()
     const out = await handleAddComment(h.ctx, {
-      ...base, anchorText: 'Our method is simple.', content: 'Can we justify "simple"?', agentName: 'Claude',
+      ...base, anchorText: 'Our method is simple.', content: 'Can we justify "simple"?', agentName: 'Quill',
     })
     expect(out).toMatchObject({ ok: true, line: 5, anchorText: 'Our method is simple.' })
     expect(out.threadId).toMatch(/^[0-9a-f]{24}$/)
-    expect(h.threads[out.threadId]!.messages[0]!.content).toBe('Can we justify "simple"?\n\nCo-authored by Claude')
+    expect(h.threads[out.threadId]!.messages[0]!.content).toBe('Can we justify "simple"?\n\nCo-authored by Quill')
 
     const sent = h.server.sock.emitsOf('applyOtUpdate')[0]!.args[1] as { op: unknown[] }
     expect(sent.op).toEqual([{ c: 'Our method is simple.', p: DOC.indexOf('Our method'), t: out.threadId }])
@@ -71,10 +71,10 @@ describe('overleaf_add_comment', () => {
   it('creates nothing when the anchor is missing or ambiguous', async () => {
     const h = await harness()
     await expect(
-      handleAddComment(h.ctx, { ...base, anchorText: 'no such sentence', content: 'x', agentName: 'Claude' }),
+      handleAddComment(h.ctx, { ...base, anchorText: 'no such sentence', content: 'x', agentName: 'Quill' }),
     ).rejects.toMatchObject({ code: 'EDIT_NO_MATCH' })
     await expect(
-      handleAddComment(h.ctx, { ...base, anchorText: '\\section', content: 'x', agentName: 'Claude' }),
+      handleAddComment(h.ctx, { ...base, anchorText: '\\section', content: 'x', agentName: 'Quill' }),
     ).rejects.toMatchObject({ code: 'EDIT_AMBIGUOUS', context: { lines: [1, 4] } })
     expect(h.calls).toEqual([])
     expect(h.server.sock.emitsOf('applyOtUpdate')).toHaveLength(0)
@@ -83,7 +83,7 @@ describe('overleaf_add_comment', () => {
   it('fails up front on an instance without a review panel (stock CE)', async () => {
     const h = await harness({ supported: false })
     await expect(
-      handleAddComment(h.ctx, { ...base, anchorText: 'We study widgets.', content: 'x', agentName: 'Claude' }),
+      handleAddComment(h.ctx, { ...base, anchorText: 'We study widgets.', content: 'x', agentName: 'Quill' }),
     ).rejects.toMatchObject({ code: 'COMMENTS_UNSUPPORTED' })
     expect(h.server.sock.emitsOf('applyOtUpdate')).toHaveLength(0)
   })
@@ -121,7 +121,7 @@ describe('overleaf_list_comments', () => {
 
   it('hides resolved threads unless asked, and picks up a comment the agent just added', async () => {
     const h = await harness()
-    const added = await handleAddComment(h.ctx, { ...base, anchorText: 'We study widgets.', content: 'Cite?', agentName: 'Claude' })
+    const added = await handleAddComment(h.ctx, { ...base, anchorText: 'We study widgets.', content: 'Cite?', agentName: 'Quill' })
     expect((await handleListComments(h.ctx, base)).comments.map((c) => c.threadId)).toEqual([added.threadId])
 
     await handleResolveComment(h.ctx, { ...base, threadId: added.threadId })
@@ -138,12 +138,12 @@ describe('overleaf_reply_comment', () => {
   it('signs the reply and refuses to reply to a thread that does not exist', async () => {
     const h = await harness()
     h.threads.th1 = { messages: [] }
-    const out = await handleReplyComment(h.ctx, { projectId: 'p1', threadId: 'th1', content: 'Done.', agentName: 'Claude' })
-    expect(out.posted).toBe('Done.\n\nCo-authored by Claude')
+    const out = await handleReplyComment(h.ctx, { projectId: 'p1', threadId: 'th1', content: 'Done.', agentName: 'Quill' })
+    expect(out.posted).toBe('Done.\n\nCo-authored by Quill')
     expect(h.threads.th1.messages).toHaveLength(1)
 
     await expect(
-      handleReplyComment(h.ctx, { projectId: 'p1', threadId: 'nope', content: 'x', agentName: 'Claude' }),
+      handleReplyComment(h.ctx, { projectId: 'p1', threadId: 'nope', content: 'x', agentName: 'Quill' }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' })
     expect(Object.keys(h.threads)).toEqual(['th1']) // no orphan thread was created
   })

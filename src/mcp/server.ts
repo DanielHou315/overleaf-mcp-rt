@@ -8,6 +8,7 @@ import { OtEngineRegistry, type OtEngineFactory } from '../overleaf/ot.js'
 import { fetchStickyCookies, validateCookie } from '../overleaf/auth.js'
 import { loadHosts, type HostConfig, type HostsConfig } from '../config.js'
 import { InvalidConfigError } from '../errors.js'
+import { VERSION } from '../version.js'
 
 export interface ServerContext {
   http: OverleafHttp
@@ -129,7 +130,7 @@ export const SERVER_INSTRUCTIONS = [
 
 export async function runMcpServer(source: ContextSource) {
   const server = new Server(
-    { name: 'overleaf-mcp-rt', version: '1.0.0' },
+    { name: 'overleaf-mcp-rt', version: VERSION },
     { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
   )
   registerAllTools(server, source)

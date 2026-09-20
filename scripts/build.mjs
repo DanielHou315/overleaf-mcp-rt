@@ -25,7 +25,7 @@
 
 import { build } from 'esbuild'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, rmSync, mkdirSync, cpSync, existsSync } from 'node:fs'
+import { chmodSync, rmSync, mkdirSync, cpSync, existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
@@ -100,6 +100,12 @@ await build({
     ].join('\n'),
   },
   loader: { '.json': 'json' },
+  // Single source of truth for the version: see src/version.ts.
+  define: {
+    __OVERLEAF_MCP_VERSION__: JSON.stringify(
+      JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf-8')).version,
+    ),
+  },
   // Don't honor tsconfig `paths` at bundle time (we map socket.io-client →
   // a .d.ts file purely for typecheck).
   tsconfigRaw: '{}',

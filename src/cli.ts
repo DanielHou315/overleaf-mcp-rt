@@ -7,6 +7,7 @@ import { hostNameForUrl, loadConfig, loadHosts, saveHost } from './config.js'
 import { validateCookie, passportLogin, resolvePastedCookie, fetchStickyCookies } from './overleaf/auth.js'
 import { buildContext, runMcpServer, HostRegistry } from './mcp/server.js'
 import { browserLogin } from './overleaf/browser-login.js'
+import { VERSION } from './version.js'
 import { installSkills, listSkills } from './skills.js'
 import { InvalidConfigError, OverleafError, AuthFailedError } from './errors.js'
 import { OverleafHttp } from './overleaf/http.js'
@@ -15,7 +16,7 @@ import { OverleafSocket } from './overleaf/socket.js'
 import { OtEngine } from './overleaf/ot.js'
 
 const HELP = `
-overleaf-mcp-rt — MCP server for Overleaf Community Edition (v1.0)
+overleaf-mcp-rt ${VERSION} — real-time MCP server for Overleaf (Community Edition, Server Pro, overleaf.com)
 
 Usage:
   overleaf-mcp-rt                Run as MCP stdio server (default).
@@ -30,6 +31,7 @@ Usage:
   overleaf-mcp-rt skills install [--target <dir>]
                                  Copy them into a skills directory (default ~/.claude/skills).
   overleaf-mcp-rt --help         Show this help.
+  overleaf-mcp-rt --version      Print the version.
 
 Several Overleaf instances can be configured side by side (run \`login\` once per
 instance). MCP tools take an optional \`host\` argument; the default host is used
@@ -178,6 +180,11 @@ export async function runDiagnose(
 
 async function main() {
   const [, , cmd, ...rest] = process.argv
+
+  if (cmd === '--version' || cmd === '-v') {
+    output.write(`${VERSION}\n`)
+    return
+  }
 
   if (cmd === '--help' || cmd === '-h' || cmd === 'help') {
     output.write(HELP)
