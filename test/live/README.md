@@ -10,7 +10,8 @@ The unit tests run the engine against a protocol-faithful fake. This directory c
 |---|---|
 | Starts, lists 22 tools, lists projects, reads the tree | login / cookie-name / CSRF / project-list scraping changes between versions |
 | Create, rename, move, delete | REST route or tree-broadcast changes |
-| String edits read back byte-for-byte by a fresh connection, with accents, CJK and emoji | OT position maths, the server's latin1-packed UTF-8, the whitespace-tolerant matcher |
+| String edits read back byte-for-byte by a fresh connection, with accents, CJK and symbols | OT position maths, the server's latin1-packed UTF-8, the whitespace-tolerant matcher |
+| Emoji: stored as U+FFFD (Overleaf's rule), the agent is told, and a delete across them is accepted while a bystander stays connected | the server silently rewriting what we sent — this suite's first catch |
 | **Agent edits while a second client types in the same doc — including the same line** | the bug this project exists to avoid: an op the server rejects disconnects *everyone* on the doc. Asserts no `otUpdateError`, no disconnect, all three views identical, nothing lost, and that the agent was shown `<external-changes>` |
 | `overleaf_write_doc` refuses to clobber unseen text, `overwrite: true` forces it | external-change tracking against real broadcasts |
 | Binary upload and read-back | upload route / file-store differences |

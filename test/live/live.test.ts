@@ -72,7 +72,7 @@ describe.skipIf(!liveEnabled)(`live Overleaf${process.env.LIVE_EXPECT_VERSION ? 
   it('applies string edits that a fresh connection reads back byte-for-byte, including non-ASCII text', async () => {
     const original = [
       '\\section{Résumé}',
-      'Naïve café — “quotes”, 数学, and an emoji 🎓 before the target.',
+      'Naïve café — “quotes”, 数学, and a symbol ✓ before the target.',
       '    indented line with   odd   spacing',
       'repeat repeat repeat',
       '',
@@ -82,9 +82,9 @@ describe.skipIf(!liveEnabled)(`live Overleaf${process.env.LIVE_EXPECT_VERSION ? 
     const edited = await agent.call('overleaf_edit_doc', {
       projectId, path,
       edits: [
-        { old_string: 'before the target', new_string: 'before the 目标 🎯' },
+        { old_string: 'before the target', new_string: 'before the 目标 ✗' },
         // Sequential: the second edit sees the first one's result.
-        { old_string: '目标 🎯.', new_string: '目标 🎯!' },
+        { old_string: '目标 ✗.', new_string: '目标 ✗!' },
         { old_string: 'repeat', new_string: 'again', replace_all: true },
       ],
     })
@@ -106,12 +106,41 @@ describe.skipIf(!liveEnabled)(`live Overleaf${process.env.LIVE_EXPECT_VERSION ? 
     expect(ambiguous.json.code).toBe('EDIT_AMBIGUOUS')
 
     const expected = original
-      .replace('before the target.', 'before the 目标 🎯!')
+      .replace('before the target.', 'before the 目标 ✗!')
       .replaceAll('repeat', 'again')
       .replace('indented line with   odd   spacing', 'tidy line')
     const stored = await freshRead(target, path)
     expect(stored).toBe(expected)
     expect((await agent.call('overleaf_read_doc', { projectId, path })).json.content).toBe(stored)
+  }, 120_000)
+
+  it('stays in step with the server over characters Overleaf cannot store (emoji)', async () => {
+    // Overleaf rewrites non-BMP characters to U+FFFD and doesn't tell the sender. If our
+    // snapshot kept the emoji, the delete below would be rejected — and a rejected op
+    // disconnects everyone on the doc, so a bystander is watching for exactly that.
+    const path = await newDoc('astral.tex', 'Result: pending.\n')
+    const bystander = await joinAsHuman(target)
+    try {
+      const { id: docId } = await bystander.engine.waitForPath(path, 5000)
+      await bystander.engine.openDoc(docId)
+
+      const wrote = await agent.call('overleaf_edit_doc', { projectId, path, edits: [{ old_string: 'pending', new_string: 'passed 🎓' }] })
+      expect(wrote.ok, wrote.text).toBe(true)
+      expect(wrote.json.notes.join(' ')).toMatch(/cannot store characters outside the Basic Multilingual Plane/)
+      expect(await freshRead(target, path)).toBe('Result: passed \uFFFD\uFFFD.\n')
+      expect((await agent.call('overleaf_read_doc', { projectId, path })).json.content).toBe('Result: passed \uFFFD\uFFFD.\n')
+      await pace()
+
+      const across = await agent.call('overleaf_edit_doc', { projectId, path, edits: [{ old_string: 'passed \uFFFD\uFFFD.', new_string: 'done.' }] })
+      expect(across.ok, across.text).toBe(true)
+      await sleep(800)
+      expect(await freshRead(target, path)).toBe('Result: done.\n')
+      expect(bystander.engine.readDoc(docId)).toBe('Result: done.\n')
+      expect(bystander.otErrors).toEqual([])
+      expect(bystander.disconnects).toBe(0)
+    } finally {
+      bystander.close()
+    }
   }, 120_000)
 
   it('edits a doc while someone else is typing in it: nobody is kicked out, nothing is lost, both converge', async () => {
