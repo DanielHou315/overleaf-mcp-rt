@@ -119,10 +119,18 @@ async function connectHost(host: HostConfig): Promise<ServerContext> {
   return buildContext({ ...host, csrfToken, stickyCookies })
 }
 
+/** Guidance every connecting agent receives, independent of any one tool. */
+export const SERVER_INSTRUCTIONS = [
+  'You are editing live Overleaf projects that people may have open in their browser right now.',
+  'Prefer overleaf_edit_doc (exact string replacement) over rewriting whole docs; it composes with what collaborators are typing.',
+  'Tool results may end with an <external-changes> block: a diff of what collaborators changed since your last call. Read it — it replaces re-reading the doc.',
+  'Comments (overleaf_add_comment / overleaf_reply_comment) are posted through the logged-in account, usually the human\'s own. They must end with "Co-authored by <your agent name>": pass agentName and the server adds the line. Only set omitSignature when the user has explicitly said not to sign comments.',
+].join('\n')
+
 export async function runMcpServer(source: ContextSource) {
   const server = new Server(
     { name: 'overleaf-mcp-rt', version: '1.0.0' },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
   )
   registerAllTools(server, source)
   const transport = new StdioServerTransport()

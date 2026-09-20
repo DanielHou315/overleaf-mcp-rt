@@ -27,7 +27,11 @@ export class FakeOverleaf {
 
   constructor(
     docs: Record<string, string>,
-    private readonly opts: { startVersion?: number } = {},
+    private readonly opts: {
+      startVersion?: number
+      /** Comment ranges returned by joinDoc, per doc id. */
+      ranges?: Record<string, { comments: Array<{ id: string; op: { c: string; p: number; t: string } }> }>
+    } = {},
   ) {
     for (const [docId, text] of Object.entries(docs)) {
       this.docs.set(docId, { text, version: opts.startVersion ?? 1, history: new Map() })
@@ -38,7 +42,7 @@ export class FakeOverleaf {
       if (!doc) return [{ message: 'not found' }]
       // Overleaf ships lines as latin1-packed UTF-8.
       const lines = doc.text.split('\n').map((l) => Buffer.from(l, 'utf-8').toString('latin1'))
-      return [null, lines, doc.version, []]
+      return [null, lines, doc.version, [], this.opts.ranges?.[docId as string] ?? {}]
     })
     this.sock.respondToEmit('applyOtUpdate', (docId, update) => {
       const u = update as { op: OtOp[]; v: number }
@@ -125,7 +129,10 @@ export async function connectEngine(server: FakeOverleaf): Promise<OtEngine> {
 }
 
 /** A ServerContext whose OT registry is wired to the fake server. Docs are addressed as `<docId>.tex`. */
-export async function makeToolHarness(docs: Record<string, string>, opts: { startVersion?: number } = {}) {
+export async function makeToolHarness(
+  docs: Record<string, string>,
+  opts: ConstructorParameters<typeof FakeOverleaf>[1] = {},
+) {
   const server = new FakeOverleaf(docs, opts)
   const engine = await connectEngine(server)
   const ot = {

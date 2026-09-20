@@ -1,6 +1,6 @@
 import { parse as parseHtml } from 'node-html-parser'
 import { OverleafHttp } from './http.js'
-import { OverleafError } from '../errors.js'
+import { CommentsUnsupportedError, OverleafError } from '../errors.js'
 
 export interface ProjectSummary {
   id: string
@@ -265,4 +265,49 @@ export class OverleafRest {
       )
     }
   }
+
+  // ---- comment threads (review panel; overleaf.com / Server Pro only) ----
+
+  /** All comment threads in the project, keyed by thread id. */
+  async getThreads(projectId: string): Promise<Record<string, CommentThread>> {
+    const res = await this.http.get(`/project/${encodeURIComponent(projectId)}/threads`)
+    if (res.status === 404) throw commentsUnsupported()
+    if (!res.ok) throw new OverleafError('OVERLEAF_GENERIC', `getThreads returned ${res.status}`)
+    return (await res.json()) as Record<string, CommentThread>
+  }
+
+  /** Post to a thread. Posting to a new id creates the thread (that is how the editor does it). */
+  async postThreadMessage(projectId: string, threadId: string, content: string): Promise<void> {
+    const res = await this.http.postJson(
+      `/project/${encodeURIComponent(projectId)}/thread/${encodeURIComponent(threadId)}/messages`,
+      { content },
+    )
+    if (res.status === 404) throw commentsUnsupported()
+    if (!res.ok) throw new OverleafError('OVERLEAF_GENERIC', `postThreadMessage returned ${res.status}`)
+  }
+
+  async setThreadResolved(projectId: string, docId: string, threadId: string, resolved: boolean): Promise<void> {
+    const res = await this.http.postJson(
+      `/project/${encodeURIComponent(projectId)}/doc/${encodeURIComponent(docId)}/thread/${encodeURIComponent(threadId)}/${resolved ? 'resolve' : 'reopen'}`,
+      {},
+    )
+    if (res.status === 404) throw commentsUnsupported()
+    if (!res.ok) throw new OverleafError('OVERLEAF_GENERIC', `${resolved ? 'resolve' : 'reopen'} thread returned ${res.status}`)
+  }
+}
+
+export interface CommentThread {
+  resolved?: boolean
+  resolved_at?: string
+  resolved_by_user?: { first_name?: string; last_name?: string; email?: string }
+  messages: Array<{
+    id: string
+    content: string
+    timestamp: number
+    user?: { first_name?: string; last_name?: string; email?: string }
+  }>
+}
+
+function commentsUnsupported(): CommentsUnsupportedError {
+  return new CommentsUnsupportedError('This Overleaf instance does not provide comment threads.')
 }

@@ -117,7 +117,34 @@ function transformComponent(dest: OtOp[], c: OtOp, otherC: OtOp, side: Side): Ot
       append(dest, c)
     }
   }
-  // We never author comment components, so `c.c` has no transform branch here.
+  else if (c.c !== undefined) {
+    // Comment: follows the text it is anchored to.
+    if (otherC.i !== undefined) {
+      if (c.p < otherC.p && otherC.p < c.p + c.c.length) {
+        const offset = otherC.p - c.p
+        append(dest, { c: c.c.slice(0, offset) + otherC.i + c.c.slice(offset), p: c.p, t: c.t })
+      } else {
+        append(dest, { c: c.c, p: transformPosition(c.p, otherC, true), t: c.t })
+      }
+    } else if (otherC.d !== undefined) {
+      if (c.p >= otherC.p + otherC.d.length) {
+        append(dest, { c: c.c, p: c.p - otherC.d.length, t: c.t })
+      } else if (c.p + c.c.length <= otherC.p) {
+        append(dest, c)
+      } else {
+        // The delete overlaps the commented text: keep what survives.
+        const newC = { c: '', p: c.p, t: c.t }
+        if (c.p < otherC.p) newC.c = c.c.slice(0, otherC.p - c.p)
+        if (c.p + c.c.length > otherC.p + otherC.d.length) {
+          newC.c += c.c.slice(otherC.p + otherC.d.length - c.p)
+        }
+        newC.p = transformPosition(newC.p, otherC)
+        append(dest, newC)
+      }
+    } else {
+      append(dest, c)
+    }
+  }
   return dest
 }
 
