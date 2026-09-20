@@ -8,7 +8,7 @@ import { createInterface } from 'node:readline/promises'
 import { stdin as input, stdout as output, stderr } from 'node:process'
 import { loadConfig } from './config.js'
 import { validateCookie, passportLogin } from './overleaf/auth.js'
-import { buildContext, runMcpServer } from './mcp/server.js'
+import { buildContext, runMcpServer, type ServerContext } from './mcp/server.js'
 import { InvalidConfigError, OverleafError, AuthFailedError } from './errors.js'
 import { OverleafHttp } from './overleaf/http.js'
 import { OverleafRest } from './overleaf/rest.js'
@@ -195,15 +195,26 @@ async function main() {
     process.exit(result.ok ? 0 : 2)
   }
 
-  // Default: MCP stdio server
-  const cfg = loadConfig()
-  const csrfToken = await validateCookie({
-    url: cfg.url,
-    sessionCookie: cfg.sessionCookie,
-    extraHeaders: cfg.extraHeaders,
+  // Default: MCP stdio server. Config and cookie are checked on the first tool
+  // call, not here: exiting before the MCP handshake shows up in hosts as an
+  // unexplained "connection closed". A failed attempt isn't cached, so
+  // running `login` fixes a live session without restarting the server.
+  let ready: Promise<ServerContext> | undefined
+  await runMcpServer(() => {
+    ready ??= (async () => {
+      const cfg = loadConfig()
+      const csrfToken = await validateCookie({
+        url: cfg.url,
+        sessionCookie: cfg.sessionCookie,
+        extraHeaders: cfg.extraHeaders,
+      })
+      return buildContext({ ...cfg, csrfToken })
+    })().catch((err: unknown) => {
+      ready = undefined
+      throw err
+    })
+    return ready
   })
-  const ctx = buildContext({ ...cfg, csrfToken })
-  await runMcpServer(ctx)
 }
 
 interface LoginArgs {

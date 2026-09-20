@@ -1,25 +1,16 @@
 import { describe, it, expect } from 'vitest'
 import { handleReadDocRange } from '../../src/mcp/tools/range.js'
-import type { ServerContext } from '../../src/mcp/server.js'
+import { makeToolHarness } from './fake-overleaf.js'
 
-function makeCtx(text: string): ServerContext {
-  return {
-    rest: null as never,
-    http: null as never,
-    ot: {
-      get: async () => ({
-        pathToDocId: () => 'docX',
-        joinDoc: async () => ({ docId: 'docX', text, version: 1 }),
-      }),
-    } as never,
-  }
+async function makeCtx(text: string) {
+  return (await makeToolHarness({ a: text })).ctx
 }
 
 describe('read_doc_range', () => {
   const text = 'line one\nline two\nline three\nline four\n'
 
   it('returns the requested line range (1-indexed inclusive)', async () => {
-    const out = await handleReadDocRange(makeCtx(text), {
+    const out = await handleReadDocRange(await makeCtx(text), {
       projectId: 'p',
       path: 'a.tex',
       startLine: 2,
@@ -31,7 +22,7 @@ describe('read_doc_range', () => {
   })
 
   it('returns by offset/length when startOffset is provided', async () => {
-    const out = await handleReadDocRange(makeCtx(text), {
+    const out = await handleReadDocRange(await makeCtx(text), {
       projectId: 'p',
       path: 'a.tex',
       startOffset: 9,
@@ -42,7 +33,7 @@ describe('read_doc_range', () => {
   })
 
   it('clamps endLine to the document length', async () => {
-    const out = await handleReadDocRange(makeCtx(text), {
+    const out = await handleReadDocRange(await makeCtx(text), {
       projectId: 'p',
       path: 'a.tex',
       startLine: 3,
@@ -54,13 +45,13 @@ describe('read_doc_range', () => {
 
   it('rejects when neither startLine nor startOffset is given', async () => {
     await expect(
-      handleReadDocRange(makeCtx(text), { projectId: 'p', path: 'a.tex' } as never),
+      handleReadDocRange(await makeCtx(text), { projectId: 'p', path: 'a.tex' } as never),
     ).rejects.toThrow(/startLine.*startOffset/)
   })
 
   it('rejects when both startLine and startOffset are provided', async () => {
     await expect(
-      handleReadDocRange(makeCtx(text), {
+      handleReadDocRange(await makeCtx(text), {
         projectId: 'p', path: 'a.tex', startLine: 1, startOffset: 0,
       }),
     ).rejects.toThrow(/not both/)
@@ -68,7 +59,7 @@ describe('read_doc_range', () => {
 
   it('rejects when endLine < startLine', async () => {
     await expect(
-      handleReadDocRange(makeCtx(text), {
+      handleReadDocRange(await makeCtx(text), {
         projectId: 'p', path: 'a.tex', startLine: 5, endLine: 2,
       }),
     ).rejects.toThrow(/before startLine/)

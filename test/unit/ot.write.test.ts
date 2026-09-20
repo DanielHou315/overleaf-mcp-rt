@@ -66,30 +66,26 @@ describe('OtEngine.writeDoc', () => {
     expect(baseline.version).toBe(5)
   })
 
-  it('ignores otUpdateApplied broadcasts from other clients', async () => {
+  it('folds in a collaborator op that reaches the server before ours', async () => {
     const { sock, engine } = await readyEngine()
-    // Start a write but do not ack/echo for our publicId
+    sock.autoConfirmWrites = false
     sock.respondToEmit('applyOtUpdate', () => {
       queueMicrotask(() => {
-        // First simulate a foreign client's update — should NOT advance our baseline.
+        // The human's keystroke lands first, at the version we submitted against…
         sock.simulate('otUpdateApplied', {
           doc: 'd1',
           op: [{ p: 0, i: '!' }],
           v: 4,
           meta: { source: 'pub-OTHER', ts: 0, user_id: 'u2' },
         })
-        // Then our own echo arrives.
-        sock.simulate('otUpdateApplied', {
-          doc: 'd1',
-          op: [{ p: 5, i: ' world' }],
-          v: 4,
-          meta: { source: 'pub-AGENT', ts: 0, user_id: 'u1' },
-        })
+        // …so the server applies ours (transformed) one version later.
+        sock.simulate('otUpdateApplied', { doc: 'd1', v: 5 })
       })
       return [null]
     })
     await engine.writeDoc('d1', 'hello world')
-    expect(engine.readDoc('d1')).toBe('hello world')
+    expect(engine.readDoc('d1')).toBe('!hello world')
+    expect(engine.getBaseline('d1')!.version).toBe(6)
   })
 
   it('joinDoc lazily on writeDoc when no baseline exists', async () => {

@@ -9,8 +9,10 @@ import type {
   JoinProjectResponse,
   ProjectEntity,
 } from './ot.types.js'
-import { OverleafError, OtDeleteMismatchError, OtVersionDriftError } from '../errors.js'
+import { NetworkError, OverleafError } from '../errors.js'
 import { computeOps, type OtOp } from './diff.js'
+import { applyOps as applyTextOps, transformOps } from './text-ot.js'
+import type { UpdateSchema } from './ot.types.js'
 
 /** Mirrors v0.1's TreeNode shape so MCP tool outputs stay stable. */
 export interface TreeNode {
@@ -22,6 +24,52 @@ export interface DocBaseline {
   docId: string
   text: string
   version: number
+}
+
+/** Outcome of `updateDoc`: the server-confirmed text either side of our op. */
+export interface UpdateResult {
+  /** Live text our edit was authored against. */
+  textBefore: string
+  /** Server-confirmed text after our op (includes any ops that raced it). */
+  textAfter: string
+  versionBefore: number
+  versionAfter: number
+  ops: OtOp[]
+}
+
+/** A change made by someone else to a doc the agent has already looked at. */
+export interface ExternalDocChange {
+  docId: string
+  path: string | null
+  /** Text as the agent last saw it. */
+  before: string
+  /** Text now (for the doc an edit targeted: just before our own op landed). */
+  after: string
+  fromVersion: number
+  toVersion: number
+  /** Display names (or user ids) of whoever edited, when we observed the ops live. */
+  authors: string[]
+  lastEditedAt: number | null
+}
+
+export interface ExternalChanges {
+  docs: ExternalDocChange[]
+  /** Human-readable file-tree events caused by other collaborators. */
+  tree: string[]
+}
+
+interface Inflight {
+  ops: OtOp[]
+  resolve: () => void
+  reject: (err: unknown) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
+interface SeenState {
+  text: string
+  version: number
+  authors: Set<string>
+  lastEditedAt: number | null
 }
 
 interface PathEntry {
@@ -50,6 +98,10 @@ export interface OtEngineOptions {
    * global setTimeout.
    */
   schedule?: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>
+  /** How long to wait for the server to confirm a submitted op (default 15s). */
+  writeConfirmTimeoutMs?: number
+  /** How long to wait for a joinDoc response (default 15s). */
+  joinTimeoutMs?: number
 }
 
 /**
@@ -79,10 +131,34 @@ export class OtEngine {
 
   /** Listener handles we install — cleaned up on disconnect(). */
   private installedHandlers: Array<{ event: string; handler: (...args: unknown[]) => void }> = []
+  /**
+   * Live, server-confirmed snapshot per joined doc. Kept current by applying
+   * every `otUpdateApplied` broadcast, so `version` is always the version the
+   * server will accept our next op at.
+   */
   private baselines = new Map<string, DocBaseline>()
   private inflightJoinDoc = new Map<string, Promise<DocBaseline>>()
+  /** Updates that arrive while a joinDoc is outstanding; replayed onto the snapshot. */
+  private joinBuffers = new Map<string, UpdateSchema[]>()
+  /** real-time rejects a joinDoc that another join/leave RPC overtakes, so joins run one at a time. */
+  private joinQueue: Promise<unknown> = Promise.resolve()
   /** Per-docId promise chain for write serialization. */
-  private writeQueues = new Map<string, Promise<void>>()
+  private writeQueues = new Map<string, Promise<unknown>>()
+  /** Our op awaiting server confirmation, per doc. At most one (writes are serialized). */
+  private inflightWrites = new Map<string, Inflight>()
+  /**
+   * What the agent has been shown, per doc. Survives reconnects — external
+   * changes are reported as a text diff against this, so missed ops don't matter.
+   */
+  private seen = new Map<string, SeenState>()
+  /** External changes captured at write time, waiting for the next collectExternalChanges(). */
+  private pendingDocReports: ExternalDocChange[] = []
+  private treeEvents: string[] = []
+  /** Tree broadcasts we expect because we just made the REST call ourselves. */
+  private ownTreeExpectations: Array<{ key: string; expires: number }> = []
+  private userNames = new Map<string, string>()
+  private readonly writeConfirmTimeoutMs: number
+  private readonly joinTimeoutMs: number
 
   constructor(opts: OtEngineOptions) {
     this.currentSocket = opts.socket
@@ -92,6 +168,8 @@ export class OtEngine {
     this.reconnectMaxAttempts = opts.reconnectMaxAttempts ?? 10
     this.onReconnectFailed = opts.onReconnectFailed ?? null
     this.schedule = opts.schedule ?? setTimeout
+    this.writeConfirmTimeoutMs = opts.writeConfirmTimeoutMs ?? 15_000
+    this.joinTimeoutMs = opts.joinTimeoutMs ?? 15_000
   }
 
   get publicId(): string | null { return this._publicId }
@@ -106,12 +184,22 @@ export class OtEngine {
     return new Promise<void>((resolve, reject) => {
       let gotPublicId = false
       let gotProject = false
+      let finished = false
       const finishIfReady = () => {
-        if (gotPublicId && gotProject) {
-          this.installTreeEventHandlers()
-          this._isConnected = true
-          resolve()
-        }
+        // connectionAccepted can land after a joinProjectResponse that already
+        // carried publicId; installing the handlers twice would double-apply
+        // every tree event and OT update.
+        if (finished || !gotPublicId || !gotProject) return
+        finished = true
+        this.installTreeEventHandlers()
+        this.installListener('otUpdateApplied', (update: unknown) =>
+          this.handleOtUpdateApplied(update as UpdateSchema),
+        )
+        this.installListener('otUpdateError', (error: unknown, message: unknown) =>
+          this.handleOtUpdateError(error, message as { doc_id?: string } | undefined),
+        )
+        this._isConnected = true
+        resolve()
       }
 
       const onConnAccepted = (_: unknown, publicId: string): void => {
@@ -121,6 +209,7 @@ export class OtEngine {
       }
       const onJoinResponse = (res: JoinProjectResponse): void => {
         this.project = res.project
+        this.indexUserNames(res.project)
         // joinProjectResponse can carry publicId too — treat as authoritative.
         if (res.publicId) {
           this._publicId = res.publicId
@@ -231,9 +320,13 @@ export class OtEngine {
   }
 
   /**
-   * Join a doc and cache its baseline. Idempotent within a session — a
-   * second call returns the cached baseline without re-emitting joinDoc.
-   * Concurrent calls for the same docId are coalesced.
+   * Join a doc and start tracking it live. Idempotent within a session — a
+   * second call returns the tracked snapshot without re-emitting joinDoc.
+   * Concurrent calls for the same docId are coalesced; joins for different
+   * docs are serialized (see joinQueue).
+   *
+   * The returned object is the live snapshot: read `text`/`version` right
+   * away rather than holding on to it across an await.
    */
   async joinDoc(docId: string): Promise<DocBaseline> {
     if (!this._isConnected) {
@@ -244,144 +337,358 @@ export class OtEngine {
     const inflight = this.inflightJoinDoc.get(docId)
     if (inflight) return inflight
 
-    const promise = this.currentSocket
-      .emitWithAck('joinDoc', docId, { encodeRanges: true })
+    const socket = this.currentSocket
+    const buffer: UpdateSchema[] = []
+    const promise: Promise<DocBaseline> = this.joinQueue
+      .catch(() => undefined)
+      .then(() => {
+        if (socket !== this.currentSocket) {
+          throw new NetworkError('Connection was reset while joining the doc')
+        }
+        // real-time subscribes us to the doc room *before* it fetches the
+        // snapshot, so updates can overtake the joinDoc response. Buffer them
+        // and replay whatever the snapshot doesn't already include.
+        this.joinBuffers.set(docId, buffer)
+        // A dead socket never acks; without a deadline one lost join would
+        // wedge every later join behind it in the queue.
+        return withTimeout(
+          socket.emitWithAck('joinDoc', docId, { encodeRanges: true }),
+          this.joinTimeoutMs,
+          () => new NetworkError(`Timed out after ${this.joinTimeoutMs}ms joining doc ${docId}`),
+        )
+      })
       .then((data) => {
+        if (socket !== this.currentSocket) {
+          throw new NetworkError('Connection was reset while joining the doc')
+        }
         const [lines, version] = data as [string[], number, ...unknown[]]
-        const text = decodeLatin1Lines(lines)
-        const baseline: DocBaseline = { docId, text, version }
+        const baseline: DocBaseline = { docId, text: decodeLatin1Lines(lines), version }
         this.baselines.set(docId, baseline)
-        this.inflightJoinDoc.delete(docId)
-        return baseline
+        this.joinBuffers.delete(docId)
+        for (const update of buffer) this.handleOtUpdateApplied(update)
+        return this.baselines.get(docId) ?? baseline
       })
-      .catch((err: unknown) => {
-        this.inflightJoinDoc.delete(docId)
-        throw err
+      .finally(() => {
+        // Only clean up our own entries: after a reconnect a newer join for
+        // the same doc may have replaced them.
+        if (this.joinBuffers.get(docId) === buffer) this.joinBuffers.delete(docId)
+        if (this.inflightJoinDoc.get(docId) === promise) this.inflightJoinDoc.delete(docId)
       })
+    this.joinQueue = promise
     this.inflightJoinDoc.set(docId, promise)
     return promise
   }
 
-  /** Return the cached baseline text for a doc, or null if not joined yet. */
+  /**
+   * Join (if needed) and return the live snapshot, recording that the agent
+   * has now looked at this doc so later external edits get reported.
+   */
+  async openDoc(docId: string): Promise<DocBaseline> {
+    const baseline = await this.joinDoc(docId)
+    if (!this.seen.has(docId)) this.markSeen(docId, baseline.text, baseline.version)
+    return baseline
+  }
+
+  /** Return the tracked text for a doc, or null if not joined yet. */
   readDoc(docId: string): string | null {
     return this.baselines.get(docId)?.text ?? null
   }
 
-  /** Read the cached baseline ({text, version}) for a doc, if joined. */
+  /** Read the tracked snapshot ({text, version}) for a doc, if joined. */
   getBaseline(docId: string): DocBaseline | undefined {
     return this.baselines.get(docId)
   }
 
-  /** For internal use by Task 9's resync path. */
+  /** True when collaborators changed the doc since the agent last saw it. */
+  hasUnseenExternalChanges(docId: string): boolean {
+    const seen = this.seen.get(docId)
+    const live = this.baselines.get(docId)
+    return !!seen && !!live && seen.text !== live.text
+  }
+
+  /** Whether the agent has been shown this doc in this session. */
+  hasSeen(docId: string): boolean {
+    return this.seen.has(docId)
+  }
+
   protected clearBaseline(docId: string): void {
     this.baselines.delete(docId)
   }
 
-  /**
-   * Replace the doc's text with newContent via OT. Computes ops, emits
-   * applyOtUpdate, awaits ack + the matching otUpdateApplied echo, then
-   * bumps the baseline.
-   *
-   * If no baseline is cached, joinDoc is called first (lazy join).
-   */
+  /** Replace the doc's text with newContent via OT (lazy-joins the doc). */
   async writeDoc(docId: string, newContent: string): Promise<void> {
-    let baseline = this.getBaseline(docId)
-    if (!baseline) {
-      baseline = await this.joinDoc(docId)
-    }
-    if (baseline.text === newContent) return // no-op
-    const ops = computeOps(baseline.text, newContent)
-    if (ops.length === 0) return
-    await this.applyOps(docId, ops)
+    await this.updateDoc(docId, () => newContent)
   }
 
   /**
-   * Lower-level: emit raw OT ops at the current baseline version. The MCP
-   * `overleaf_edit_doc` tool's `raw_ops` mode routes here.
+   * Lower-level: apply caller-positioned OT ops. Positions are validated
+   * against the live text; a stale offset throws OtDeleteMismatchError
+   * before anything is sent. The MCP `raw_ops` edit mode routes here.
    */
   async applyOps(docId: string, ops: OtOp[]): Promise<void> {
-    // Chain onto any in-flight write for the same docId so concurrent
-    // callers can't both read the same baseline. Across different docIds,
-    // calls run in parallel.
+    await this.updateDoc(docId, (text) => applyTextOps(text, ops))
+  }
+
+  /**
+   * Edit a doc. `edit` receives the *live* text and returns the desired text;
+   * it runs synchronously right before the op is emitted, so there is no
+   * window in which a collaborator's keystroke can invalidate the offsets.
+   * If `edit` throws, nothing is sent. Resolves once the server confirms.
+   *
+   * Writes to the same doc are serialized; different docs run in parallel.
+   */
+  async updateDoc(docId: string, edit: (text: string) => string): Promise<UpdateResult> {
     const previous = this.writeQueues.get(docId) ?? Promise.resolve()
     const next = previous
       .catch(() => undefined) // a prior failure must not block the next caller
-      .then(() => this.applyOpsWithResync(docId, ops, /* attemptsLeft */ 1))
+      .then(() => this.submitEdit(docId, edit))
     this.writeQueues.set(docId, next)
     try {
-      await next
+      return await next
     } finally {
       // If we're the tail of the queue, clear the entry so the map doesn't grow.
-      if (this.writeQueues.get(docId) === next) {
-        this.writeQueues.delete(docId)
-      }
+      if (this.writeQueues.get(docId) === next) this.writeQueues.delete(docId)
     }
   }
 
-  private async applyOpsWithResync(docId: string, ops: OtOp[], attemptsLeft: number): Promise<void> {
-    let baseline = this.getBaseline(docId)
-    if (!baseline) baseline = await this.joinDoc(docId)
-
-    // Pre-validate against the local baseline. Surfaces OtDeleteMismatchError
-    // before the round-trip to the server, so the agent gets actionable
-    // feedback instead of an opaque server reject.
-    applyOpsLocal(baseline.text, ops)
-
-    const update = { doc: docId, op: ops, v: baseline.version }
-
-    try {
-      // The applyOtUpdate ack IS the commit confirmation — the server only
-      // acks after the doc-updater service applies the op. We do NOT wait for
-      // an `otUpdateApplied` echo: the server omits `meta` for own-writes
-      // (sends just `{doc, v}`), so filtering by `meta.source === publicId`
-      // would hang forever. Workshop's applyOtUpdate likewise only awaits
-      // the ack (src/api/socketio.ts:applyOtUpdate).
-      await this.currentSocket.emitWithAck('applyOtUpdate', docId, update)
-    } catch (err) {
-      if (isVersionMismatch(err) && attemptsLeft > 0) {
-        // Resync: drop baseline, re-joinDoc, recompute ops, retry.
-        this.clearBaseline(docId)
-        const fresh = await this.joinDoc(docId)
-        // Recompute ops against the new text. The original ops were authored
-        // against an older baseline, so we re-derive what the agent intended:
-        // apply old ops to the OLD baseline text to get the desired final
-        // text, then diff THAT against the new baseline.
-        const oldText = applyOpsLocal(baseline.text, ops)
-        const recomputedOps = computeOps(fresh.text, oldText)
-        if (recomputedOps.length === 0) return
-        return this.applyOpsWithResync(docId, recomputedOps, attemptsLeft - 1)
-      }
-      if (isVersionMismatch(err)) {
-        const fresh = this.getBaseline(docId)
-        throw new OtVersionDriftError(
-          `Doc ${docId} kept drifting after resync`,
-          {
-            docId,
-            expected: baseline.version,
-            actual: fresh?.version ?? -1,
-          },
-        )
-      }
-      throw err instanceof Error ? err : new OverleafError('OVERLEAF_GENERIC', String(err))
+  private async submitEdit(docId: string, edit: (text: string) => string): Promise<UpdateResult> {
+    const baseline = await this.joinDoc(docId)
+    // No awaits from here to the emit: text, version and ops must be consistent.
+    const textBefore = baseline.text
+    const versionBefore = baseline.version
+    const ops = computeOps(textBefore, edit(textBefore))
+    if (ops.length === 0) {
+      this.reportExternal(docId, textBefore, versionBefore)
+      this.markSeen(docId, textBefore, versionBefore)
+      return { textBefore, textAfter: textBefore, versionBefore, versionAfter: versionBefore, ops }
     }
 
-    // Bump baseline locally — server has applied the op.
-    const stillBaseline = this.getBaseline(docId)
-    if (stillBaseline) {
-      stillBaseline.text = applyOpsLocal(stillBaseline.text, ops)
-      stillBaseline.version = baseline.version + 1
+    // The applyOtUpdate ack only means real-time queued the op in Redis. The
+    // commit confirmation is a later `otUpdateApplied {doc, v}` without `op`
+    // (DocumentUpdaterController._applyUpdateFromDocumentUpdater); a rejection
+    // arrives as `otUpdateError`. Waiting for the ack alone would let us race
+    // ahead with a version the server hasn't reached yet.
+    const confirmed = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.failInflight(docId, new NetworkError(
+          `Timed out after ${this.writeConfirmTimeoutMs}ms waiting for Overleaf to confirm the edit. ` +
+            'It may or may not have been applied — re-read the doc before retrying.',
+        ))
+      }, this.writeConfirmTimeoutMs)
+      this.inflightWrites.set(docId, { ops, resolve, reject, timer })
+    })
+    this.currentSocket
+      .emitWithAck('applyOtUpdate', docId, { doc: docId, op: ops, v: versionBefore })
+      .catch((err: unknown) => {
+        this.failInflight(
+          docId,
+          err instanceof Error ? err : new OverleafError('OVERLEAF_GENERIC', String(err)),
+        )
+      })
+    await confirmed
+
+    // handleOwnAck normally leaves a fresh snapshot behind; if it had to drop
+    // it (missed updates), rejoin for the authoritative text.
+    const after = this.baselines.get(docId) ?? (await this.joinDoc(docId))
+    this.markSeen(docId, after.text, after.version)
+    return {
+      textBefore,
+      textAfter: after.text,
+      versionBefore,
+      versionAfter: after.version,
+      ops,
+    }
+  }
+
+  /**
+   * Discard a snapshot we can no longer trust. If the agent has seen the doc,
+   * rejoin in the background so external changes to it keep being reported
+   * rather than going silent until the agent happens to touch it again.
+   */
+  private dropBaseline(docId: string): void {
+    this.baselines.delete(docId)
+    if (!this._isConnected || !this.seen.has(docId) || this.inflightWrites.has(docId)) return
+    void this.joinDoc(docId).catch(() => undefined)
+  }
+
+  private failInflight(docId: string, err: unknown): void {
+    const inflight = this.inflightWrites.get(docId)
+    if (!inflight) return
+    clearTimeout(inflight.timer)
+    this.inflightWrites.delete(docId)
+    // Whether the op landed is unknown; force the next access to rejoin.
+    this.baselines.delete(docId)
+    inflight.reject(err)
+  }
+
+  /**
+   * Every op applied to a joined doc arrives here: collaborators' ops carry
+   * `op`; the confirmation of our own op is `{doc, v}` with no `op`.
+   */
+  private handleOtUpdateApplied(update: UpdateSchema): void {
+    if (!update || typeof update.doc !== 'string') return
+    const buffer = this.joinBuffers.get(update.doc)
+    if (buffer) {
+      buffer.push(update)
+      return
+    }
+    const isOwnAck =
+      !update.op || (update.meta?.source != null && update.meta.source === this._publicId)
+    if (isOwnAck) this.handleOwnAck(update)
+    else this.handleRemoteUpdate(update)
+  }
+
+  private handleOwnAck(update: UpdateSchema): void {
+    const docId = update.doc
+    const inflight = this.inflightWrites.get(docId)
+    if (!inflight) return
+    clearTimeout(inflight.timer)
+    this.inflightWrites.delete(docId)
+    const baseline = this.baselines.get(docId)
+    if (baseline && update.v === baseline.version) {
+      try {
+        // Everything collaborators did up to this point is external to the
+        // agent's edit; capture it before our own op is folded in.
+        this.reportExternal(docId, baseline.text, baseline.version)
+        // inflight.ops has been transformed past every op that beat ours to
+        // the server, exactly as the server transformed it.
+        baseline.text = applyTextOps(baseline.text, inflight.ops)
+        baseline.version = update.v + 1
+      } catch {
+        this.baselines.delete(docId)
+      }
+    } else {
+      // We missed updates between our snapshot and the ack; the op is applied
+      // but we can't reconstruct the text. Rejoin on next access.
+      this.baselines.delete(docId)
+    }
+    inflight.resolve()
+  }
+
+  private handleRemoteUpdate(update: UpdateSchema): void {
+    const docId = update.doc
+    const baseline = this.baselines.get(docId)
+    if (!baseline || !update.op) return
+    if (update.v < baseline.version) return // already part of our snapshot
+    if (update.v > baseline.version) {
+      // Gap: we missed an update, so the text can't be reconstructed.
+      this.dropBaseline(docId)
+      return
+    }
+    try {
+      baseline.text = applyTextOps(baseline.text, update.op)
+      baseline.version = update.v + 1
+      const inflight = this.inflightWrites.get(docId)
+      if (inflight) inflight.ops = transformOps(inflight.ops, update.op, 'left')
+    } catch {
+      this.dropBaseline(docId)
+      return
+    }
+    const seen = this.seen.get(docId)
+    if (seen) {
+      const userId = update.meta?.user_id
+      if (userId) seen.authors.add(this.userNames.get(userId) ?? userId)
+      seen.lastEditedAt = update.meta?.ts ?? Date.now()
+    }
+  }
+
+  /** Server rejected an op. real-time also disconnects every client in the doc room. */
+  private handleOtUpdateError(error: unknown, message?: { doc_id?: string }): void {
+    const detail =
+      typeof error === 'string' ? error : (error as { message?: string })?.message ?? String(error)
+    const err = new OverleafError('OVERLEAF_GENERIC', `Overleaf rejected the edit: ${detail}`, {
+      docId: message?.doc_id,
+    })
+    const docIds = message?.doc_id ? [message.doc_id] : [...this.inflightWrites.keys()]
+    for (const docId of docIds) this.failInflight(docId, err)
+    if (message?.doc_id) this.baselines.delete(message.doc_id)
+  }
+
+  // ---- external-change awareness ----
+
+  private markSeen(docId: string, text: string, version: number): void {
+    this.seen.set(docId, { text, version, authors: new Set(), lastEditedAt: null })
+  }
+
+  /** Queue a report if `text` differs from what the agent last saw. */
+  private reportExternal(docId: string, text: string, version: number): void {
+    const seen = this.seen.get(docId)
+    if (!seen || seen.text === text) return
+    this.pendingDocReports.push({
+      docId,
+      path: this.idToPath(docId),
+      before: seen.text,
+      after: text,
+      fromVersion: seen.version,
+      toVersion: version,
+      authors: [...seen.authors],
+      lastEditedAt: seen.lastEditedAt,
+    })
+  }
+
+  /**
+   * Everything collaborators changed since the agent last looked: text diffs
+   * for docs it has opened, plus file-tree events. Calling this marks those
+   * changes as delivered, so each is reported exactly once.
+   */
+  collectExternalChanges(): ExternalChanges {
+    for (const [docId, baseline] of this.baselines) {
+      // A doc with our own op in flight is reported when that op is confirmed.
+      if (this.inflightWrites.has(docId) || !this.seen.has(docId)) continue
+      this.reportExternal(docId, baseline.text, baseline.version)
+      this.markSeen(docId, baseline.text, baseline.version)
+    }
+    const docs = this.pendingDocReports
+    const tree = this.treeEvents
+    this.pendingDocReports = []
+    this.treeEvents = []
+    return { docs, tree }
+  }
+
+  /**
+   * Announce a tree mutation we're about to make over REST so its broadcast
+   * isn't reported back to the agent as someone else's change. `key` is the
+   * entity id (rename/move/delete) or `parentFolderId/name` (create).
+   */
+  expectOwnTreeEvent(key: string): void {
+    this.ownTreeExpectations.push({ key, expires: Date.now() + 15_000 })
+  }
+
+  private consumeOwnTreeEvent(...keys: string[]): boolean {
+    const now = Date.now()
+    this.ownTreeExpectations = this.ownTreeExpectations.filter((e) => e.expires > now)
+    const idx = this.ownTreeExpectations.findIndex((e) => keys.includes(e.key))
+    if (idx < 0) return false
+    this.ownTreeExpectations.splice(idx, 1)
+    return true
+  }
+
+  private idToPath(entityId: string): string | null {
+    for (const [path, entry] of this.pathIndex) if (entry.id === entityId) return path
+    return null
+  }
+
+  private indexUserNames(project: ProjectEntity): void {
+    for (const user of [project.owner, ...(project.members ?? [])]) {
+      if (!user?._id) continue
+      const name = [user.first_name, user.last_name].filter(Boolean).join(' ').trim()
+      this.userNames.set(user._id, name || user.email || user._id)
     }
   }
 
   private installTreeEventHandlers(): void {
-    this.installListener('reciveNewDoc', (parentFolderId: unknown, doc: unknown) =>
-      this.applyNewEntity(parentFolderId as string, doc as DocEntity, 'doc'),
+    // web appends the acting user's id to the create broadcasts:
+    // reciveNewDoc(folderId, doc, source, userId),
+    // reciveNewFile(folderId, file, source, linkedFileData, userId),
+    // reciveNewFolder(folderId, folder, userId). Rename/move/remove carry none.
+    this.installListener('reciveNewDoc', (parentFolderId: unknown, doc: unknown, _source: unknown, userId: unknown) =>
+      this.applyNewEntity(parentFolderId as string, doc as DocEntity, 'doc', userId),
     )
-    this.installListener('reciveNewFile', (parentFolderId: unknown, file: unknown) =>
-      this.applyNewEntity(parentFolderId as string, file as FileRefEntity, 'file'),
+    this.installListener('reciveNewFile', (parentFolderId: unknown, file: unknown, _source: unknown, _linked: unknown, userId: unknown) =>
+      this.applyNewEntity(parentFolderId as string, file as FileRefEntity, 'file', userId),
     )
-    this.installListener('reciveNewFolder', (parentFolderId: unknown, folder: unknown) =>
-      this.applyNewEntity(parentFolderId as string, folder as FolderEntity, 'folder'),
+    this.installListener('reciveNewFolder', (parentFolderId: unknown, folder: unknown, userId: unknown) =>
+      this.applyNewEntity(parentFolderId as string, folder as FolderEntity, 'folder', userId),
     )
     this.installListener('reciveEntityRename', (entityId: unknown, newName: unknown) =>
       this.applyRename(entityId as string, newName as string),
@@ -398,6 +705,7 @@ export class OtEngine {
     parentFolderId: string,
     entity: DocEntity | FileRefEntity | FolderEntity,
     kind: 'doc' | 'file' | 'folder',
+    userId?: unknown,
   ): void {
     const project = this.getProject()
     if (!project) return
@@ -407,6 +715,10 @@ export class OtEngine {
     else if (kind === 'file') parent.fileRefs.push(entity as FileRefEntity)
     else parent.folders.push(entity as FolderEntity)
     this.rebuildPathIndex()
+    if (!this.consumeOwnTreeEvent(`${parentFolderId}/${entity.name}`)) {
+      const who = typeof userId === 'string' ? ` by ${this.userNames.get(userId) ?? userId}` : ''
+      this.treeEvents.push(`created ${kind} ${this.idToPath(entity._id) ?? entity.name}${who}`)
+    }
   }
 
   private applyRename(entityId: string, newName: string): void {
@@ -414,8 +726,12 @@ export class OtEngine {
     if (!project) return
     const found = findEntity(project.rootFolder[0]!, entityId)
     if (!found) return
+    const oldPath = this.idToPath(entityId)
     found.entity.name = newName
     this.rebuildPathIndex()
+    if (!this.consumeOwnTreeEvent(entityId)) {
+      this.treeEvents.push(`renamed ${found.kind} ${oldPath ?? entityId} → ${this.idToPath(entityId) ?? newName}`)
+    }
   }
 
   private applyMove(entityId: string, newParentId: string): void {
@@ -424,6 +740,7 @@ export class OtEngine {
     const target = findEntity(project.rootFolder[0]!, entityId)
     const newParent = findFolder(project.rootFolder[0]!, newParentId)
     if (!target || !newParent) return
+    const oldPath = this.idToPath(entityId)
     // Remove from old parent
     const arr = this.containerArray(target.parent, target.kind)
     const idx = arr.findIndex((e) => e._id === entityId)
@@ -432,6 +749,9 @@ export class OtEngine {
     const newArr = this.containerArray(newParent, target.kind)
     newArr.push(target.entity as never)
     this.rebuildPathIndex()
+    if (!this.consumeOwnTreeEvent(entityId)) {
+      this.treeEvents.push(`moved ${target.kind} ${oldPath ?? entityId} → ${this.idToPath(entityId) ?? entityId}`)
+    }
   }
 
   private applyRemove(entityId: string): void {
@@ -439,12 +759,17 @@ export class OtEngine {
     if (!project) return
     const found = findEntity(project.rootFolder[0]!, entityId)
     if (!found) return
+    const oldPath = this.idToPath(entityId)
     const arr = this.containerArray(found.parent, found.kind)
     const idx = arr.findIndex((e) => e._id === entityId)
     if (idx >= 0) arr.splice(idx, 1)
     this.rebuildPathIndex()
-    // Drop any cached baseline for this doc
+    // Drop any tracked state for this doc
     this.clearBaseline(entityId)
+    this.seen.delete(entityId)
+    if (!this.consumeOwnTreeEvent(entityId)) {
+      this.treeEvents.push(`deleted ${found.kind} ${oldPath ?? entityId}`)
+    }
   }
 
   private containerArray(folder: FolderEntity, kind: 'doc' | 'file' | 'folder'): Array<{ _id: string; name: string }> {
@@ -462,12 +787,14 @@ export class OtEngine {
       return
     }
 
-    // Drop old state. In-flight writes will see their underlying ws fail
-    // when the socket closes; emitWithAck rejects, applyOpsWithResync
-    // surfaces the error to the caller as NetworkError.
+    // Drop live state; `seen` is kept so edits made while we were away are
+    // still reported (as a diff) once the docs are rejoined.
     this._isConnected = false
+    this.failAllInflight()
     this.baselines.clear()
     this.inflightJoinDoc.clear()
+    this.joinBuffers.clear()
+    this.joinQueue = Promise.resolve() // don't queue behind joins on the dead socket
     for (const { event, handler } of this.installedHandlers) {
       this.currentSocket.off(event, handler)
     }
@@ -485,7 +812,14 @@ export class OtEngine {
       this.reconnectTimer = null
       this.currentSocket = this.socketFactory!()
       void this.connect().then(
-        () => { this.reconnectAttempt = 0 },
+        () => {
+          this.reconnectAttempt = 0
+          // Resume live tracking of every doc the agent has looked at.
+          for (const docId of this.seen.keys()) {
+            if (this.idToPath(docId) === null) this.seen.delete(docId)
+            else void this.joinDoc(docId).catch(() => undefined)
+          }
+        },
         () => this.scheduleReconnect(),
       )
     }, delay)
@@ -502,7 +836,17 @@ export class OtEngine {
     }
     this.installedHandlers = []
     this._isConnected = false
+    this.failAllInflight()
     this.currentSocket.disconnect()
+  }
+
+  private failAllInflight(): void {
+    for (const docId of [...this.inflightWrites.keys()]) {
+      this.failInflight(docId, new NetworkError(
+        'Connection to Overleaf was lost before the edit was confirmed. ' +
+          'It may or may not have been applied — re-read the doc before retrying.',
+      ))
+    }
   }
 
   // ---- internals (also called by later tasks) ----
@@ -597,11 +941,26 @@ export class OtEngineRegistry {
     return promise
   }
 
+  /** The engine for a project if one is already connected; never opens a connection. */
+  peek(projectId: string): OtEngine | undefined {
+    return this.engines.get(projectId)
+  }
+
   /** Disconnect and drop every engine. */
   async closeAll(): Promise<void> {
     for (const engine of this.engines.values()) engine.disconnect()
     this.engines.clear()
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => Error): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(onTimeout()), ms)
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value) },
+      (err: unknown) => { clearTimeout(timer); reject(err) },
+    )
+  })
 }
 
 /**
@@ -615,40 +974,8 @@ function decodeLatin1Lines(lines: string[]): string {
   return lines.map((line) => Buffer.from(line, 'latin1').toString('utf-8')).join('\n')
 }
 
-function isVersionMismatch(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false
-  const e = err as { code?: unknown; message?: unknown; name?: unknown }
-  if (typeof e.code === 'string' && /version|OutOfSync/i.test(e.code)) return true
-  if (typeof e.message === 'string' && /version|out.of.sync|conflict/i.test(e.message)) return true
-  return false
-}
-
-/**
- * Apply ops to text locally to derive the post-update baseline. Mirrors what
- * the server will do; we use this (instead of waiting for the server to
- * echo back the resulting text) because Overleaf's otUpdateApplied
- * broadcasts only carry the op + version, not the resulting text.
- */
-export function applyOpsLocal(text: string, ops: OtOp[]): string {
-  let out = text
-  for (let i = 0; i < ops.length; i++) {
-    const op = ops[i]!
-    if (op.i !== undefined) {
-      out = out.slice(0, op.p) + op.i + out.slice(op.p)
-    } else if (op.d !== undefined) {
-      const slice = out.slice(op.p, op.p + op.d.length)
-      if (slice !== op.d) {
-        throw new OtDeleteMismatchError(
-          `Delete op #${i} at position ${op.p} expected ${JSON.stringify(op.d.slice(0, 80))}` +
-            ` but doc has ${JSON.stringify(slice.slice(0, 80))}`,
-          { p: op.p, expected: op.d, actual: slice, opIndex: i },
-        )
-      }
-      out = out.slice(0, op.p) + out.slice(op.p + op.d.length)
-    }
-  }
-  return out
-}
+/** Apply ops to text locally, mirroring what the server will do. */
+export { applyOps as applyOpsLocal } from './text-ot.js'
 
 type EntityKind = 'doc' | 'file' | 'folder'
 interface FoundEntity {

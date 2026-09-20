@@ -30,11 +30,21 @@ async function resolveParentFolderId(
   return folderId
 }
 
+/**
+ * Tell the engine a tree broadcast is about to arrive because of our own REST
+ * call, so it isn't reported to the agent as a collaborator's change.
+ */
+async function expectOwn(ctx: ServerContext, projectId: string, key: string): Promise<void> {
+  const engine = await ctx.ot.get(projectId)
+  engine.expectOwnTreeEvent?.(key)
+}
+
 export async function handleCreateFolder(
   ctx: ServerContext,
   input: { projectId: string; parentPath: string; name: string },
 ): Promise<MutationResult> {
   const parentFolderId = await resolveParentFolderId(ctx, input.projectId, input.parentPath)
+  await expectOwn(ctx, input.projectId, `${parentFolderId}/${input.name}`)
   const { id } = await ctx.rest.createFolder(input.projectId, parentFolderId, input.name)
   // Wait for the realtime broadcast so subsequent reads see a coherent tree.
   const engine = await ctx.ot.get(input.projectId)
@@ -51,6 +61,7 @@ export async function handleCreateDoc(
   input: { projectId: string; parentPath: string; name: string; content?: string },
 ): Promise<MutationResult> {
   const parentFolderId = await resolveParentFolderId(ctx, input.projectId, input.parentPath)
+  await expectOwn(ctx, input.projectId, `${parentFolderId}/${input.name}`)
   const { id } = await ctx.rest.createDoc(input.projectId, parentFolderId, input.name)
   const engine = await ctx.ot.get(input.projectId)
   const newPath = input.parentPath === '' ? input.name : `${input.parentPath}/${input.name}`
@@ -76,6 +87,11 @@ export async function handleUploadFile(
   const parentFolderId = await resolveParentFolderId(ctx, input.projectId, input.parentPath)
   const bytes = new Uint8Array(Buffer.from(input.contentBase64, 'base64'))
   const mime = effectiveMime(input.mimeType ?? '', input.name)
+  await expectOwn(ctx, input.projectId, `${parentFolderId}/${input.name}`)
+  // Uploading over an existing name makes Overleaf remove the old entity first.
+  const existingPath = input.parentPath === '' ? input.name : `${input.parentPath}/${input.name}`
+  const existing = (await ctx.ot.get(input.projectId)).pathToEntity(existingPath)
+  if (existing) await expectOwn(ctx, input.projectId, existing.id)
   const { id, kind } = await ctx.rest.uploadFile(
     input.projectId,
     parentFolderId,
@@ -111,6 +127,7 @@ export async function handleRename(
   input: { projectId: string; path: string; newName: string },
 ): Promise<MutationResult> {
   const { kind, id } = await resolvePathEntity(ctx, input.projectId, input.path)
+  await expectOwn(ctx, input.projectId, id)
   await ctx.rest.renameEntity(input.projectId, kind, id, input.newName)
   // Best-effort wait for the broadcast.
   const engine = await ctx.ot.get(input.projectId)
@@ -132,6 +149,7 @@ export async function handleMove(
     input.projectId,
     input.newParentPath,
   )
+  await expectOwn(ctx, input.projectId, id)
   await ctx.rest.moveEntity(input.projectId, kind, id, newParentFolderId)
   const engine = await ctx.ot.get(input.projectId)
   const lastSlash = input.path.lastIndexOf('/')
@@ -146,6 +164,7 @@ export async function handleDeleteEntity(
   input: { projectId: string; path: string },
 ): Promise<MutationResult> {
   const { kind, id } = await resolvePathEntity(ctx, input.projectId, input.path)
+  await expectOwn(ctx, input.projectId, id)
   await ctx.rest.deleteEntity(input.projectId, kind, id)
   return { ok: true, id, kind }
 }
