@@ -12,6 +12,7 @@ export type ErrorCode =
   | 'EDIT_AMBIGUOUS'
   | 'DOC_CHANGED_EXTERNALLY'
   | 'DOC_NOT_READ'
+  | 'COMMENTS_UNSUPPORTED'
 
 export interface ErrorEnvelope {
   code: ErrorCode
@@ -115,6 +116,12 @@ export class DocChangedExternallyError extends OverleafError {
   }
 }
 
+export class CommentsUnsupportedError extends OverleafError {
+  constructor(message: string, context: Record<string, unknown> = {}) {
+    super('COMMENTS_UNSUPPORTED', message, context)
+  }
+}
+
 export class DocNotReadError extends OverleafError {
   constructor(message: string, context: Record<string, unknown> = {}) {
     super('DOC_NOT_READ', message, context)
@@ -141,6 +148,8 @@ const HINTS: Partial<Record<ErrorCode, string>> = {
     'Include more surrounding text in old_string so it identifies one location, or set replace_all to change every occurrence.',
   DOC_CHANGED_EXTERNALLY:
     'A collaborator edited this doc after you last read it; the external-changes block in this response shows their edits. Nothing was written. Use overleaf_edit_doc (it targets text, so it composes with their edits) or merge their changes into your content and retry.',
+  COMMENTS_UNSUPPORTED:
+    'Comment threads are part of Overleaf\'s review panel, which overleaf.com and Server Pro have but stock Community Edition does not. Nothing was changed. On this instance, put the note in the text as a LaTeX comment (% ...) or use another host.',
   DOC_NOT_READ:
     'Read the doc first (overleaf_read_doc) so you do not overwrite text you have not seen, or use overleaf_edit_doc for a targeted change. Pass overwrite=true to replace it regardless.',
   OVERLEAF_AUTH_FAILED:

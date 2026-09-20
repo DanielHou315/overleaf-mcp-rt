@@ -24,6 +24,17 @@ export interface DocBaseline {
   docId: string
   text: string
   version: number
+  /** Comment anchors, kept in step with the text as ops arrive. */
+  comments: CommentAnchor[]
+}
+
+/** Where a comment thread is attached in a doc. */
+export interface CommentAnchor {
+  threadId: string
+  /** Offset of the commented text. */
+  p: number
+  /** The commented text. */
+  text: string
 }
 
 /** Outcome of `updateDoc`: the server-confirmed text either side of our op. */
@@ -361,8 +372,18 @@ export class OtEngine {
         if (socket !== this.currentSocket) {
           throw new NetworkError('Connection was reset while joining the doc')
         }
-        const [lines, version] = data as [string[], number, ...unknown[]]
-        const baseline: DocBaseline = { docId, text: decodeLatin1Lines(lines), version }
+        const [lines, version, , ranges] = data as [string[], number, unknown, JoinDocRanges | undefined]
+        const baseline: DocBaseline = {
+          docId,
+          text: decodeLatin1Lines(lines),
+          version,
+          comments: (ranges?.comments ?? []).map((c) => ({
+            threadId: c.op.t ?? c.id,
+            p: c.op.p,
+            // encodeRanges packs comment text the same way as doc lines.
+            text: Buffer.from(c.op.c ?? '', 'latin1').toString('utf-8'),
+          })),
+        }
         this.baselines.set(docId, baseline)
         this.joinBuffers.delete(docId)
         for (const update of buffer) this.handleOtUpdateApplied(update)
@@ -451,12 +472,44 @@ export class OtEngine {
     }
   }
 
-  private async submitEdit(docId: string, edit: (text: string) => string): Promise<UpdateResult> {
+  private submitEdit(docId: string, edit: (text: string) => string): Promise<UpdateResult> {
+    return this.submitOps(docId, (text) => computeOps(text, edit(text)))
+  }
+
+  /**
+   * Attach comment thread `threadId` to a span of the doc. `locate` receives
+   * the live text and returns the span; like edits it runs in the same tick
+   * the op is emitted. The thread's first message must already exist.
+   */
+  async addCommentAnchor(
+    docId: string,
+    threadId: string,
+    locate: (text: string) => { start: number; end: number },
+  ): Promise<{ p: number; text: string; version: number }> {
+    let anchor = { p: 0, text: '' }
+    const previous = this.writeQueues.get(docId) ?? Promise.resolve()
+    const next = previous.catch(() => undefined).then(() =>
+      this.submitOps(docId, (text) => {
+        const span = locate(text)
+        anchor = { p: span.start, text: text.slice(span.start, span.end) }
+        return [{ c: anchor.text, p: anchor.p, t: threadId }]
+      }),
+    )
+    this.writeQueues.set(docId, next)
+    try {
+      const result = await next
+      return { ...anchor, version: result.versionAfter }
+    } finally {
+      if (this.writeQueues.get(docId) === next) this.writeQueues.delete(docId)
+    }
+  }
+
+  private async submitOps(docId: string, build: (text: string) => OtOp[]): Promise<UpdateResult> {
     const baseline = await this.joinDoc(docId)
     // No awaits from here to the emit: text, version and ops must be consistent.
     const textBefore = baseline.text
     const versionBefore = baseline.version
-    const ops = computeOps(textBefore, edit(textBefore))
+    const ops = build(textBefore)
     if (ops.length === 0) {
       this.reportExternal(docId, textBefore, versionBefore)
       this.markSeen(docId, textBefore, versionBefore)
@@ -552,7 +605,7 @@ export class OtEngine {
         this.reportExternal(docId, baseline.text, baseline.version)
         // inflight.ops has been transformed past every op that beat ours to
         // the server, exactly as the server transformed it.
-        baseline.text = applyTextOps(baseline.text, inflight.ops)
+        applyToBaseline(baseline, inflight.ops)
         baseline.version = update.v + 1
       } catch {
         this.baselines.delete(docId)
@@ -576,7 +629,7 @@ export class OtEngine {
       return
     }
     try {
-      baseline.text = applyTextOps(baseline.text, update.op)
+      applyToBaseline(baseline, update.op)
       baseline.version = update.v + 1
       const inflight = this.inflightWrites.get(docId)
       if (inflight) inflight.ops = transformOps(inflight.ops, update.op, 'left')
@@ -950,6 +1003,41 @@ export class OtEngineRegistry {
   async closeAll(): Promise<void> {
     for (const engine of this.engines.values()) engine.disconnect()
     this.engines.clear()
+  }
+}
+
+interface JoinDocRanges {
+  comments?: Array<{ id: string; op: { c?: string; p: number; t?: string } }>
+}
+
+/** Apply ops to the snapshot text and keep comment anchors attached to their text. */
+function applyToBaseline(baseline: DocBaseline, ops: OtOp[]): void {
+  baseline.text = applyTextOps(baseline.text, ops)
+  for (const op of ops) {
+    if (op.c !== undefined) {
+      if (op.t && !baseline.comments.some((c) => c.threadId === op.t)) {
+        baseline.comments.push({ threadId: op.t, p: op.p, text: op.c })
+      }
+      continue
+    }
+    for (const anchor of baseline.comments) {
+      const end = anchor.p + anchor.text.length
+      if (op.i !== undefined) {
+        if (op.p <= anchor.p) anchor.p += op.i.length
+        else if (op.p < end) {
+          anchor.text = anchor.text.slice(0, op.p - anchor.p) + op.i + anchor.text.slice(op.p - anchor.p)
+        }
+      } else if (op.d !== undefined) {
+        const dEnd = op.p + op.d.length
+        if (dEnd <= anchor.p) anchor.p -= op.d.length
+        else if (op.p < end) {
+          const keepHead = anchor.text.slice(0, Math.max(0, op.p - anchor.p))
+          const keepTail = anchor.text.slice(Math.max(0, dEnd - anchor.p))
+          anchor.text = keepHead + keepTail
+          anchor.p = Math.min(anchor.p, op.p)
+        }
+      }
+    }
   }
 }
 
