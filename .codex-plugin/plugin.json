@@ -1,6 +1,6 @@
 {
   "name": "overleaf-mcp-rt",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Edit Overleaf projects live alongside human collaborators. Bundles the overleaf-mcp-rt MCP server (self-hosted Overleaf and overleaf.com) with skills for setup, safe co-editing, LaTeX workflow and review comments. Use when asked to read, write, review or compile anything on Overleaf.",
   "author": {
     "name": "Daniel Hou",
