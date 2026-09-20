@@ -7,8 +7,10 @@ export interface OtOp {
   i?: string
   /** Delete: the exact text being removed at p (server validates byte-equality). */
   d?: string
-  /** Comment (review panel): annotates the range at p without changing text. We never author these. */
+  /** Comment (review panel): anchors thread `t` to the text `c` at p without changing the text. */
   c?: string
+  /** Thread id of a comment component. */
+  t?: string
 }
 
 const EQUAL = 0

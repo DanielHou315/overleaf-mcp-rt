@@ -7,6 +7,7 @@ import type { ServerContext } from '../server.js'
 import { handleListProjects, handleGetProjectTree } from './projects.js'
 import { handleReadDoc, handleReadFile, handleWriteDoc } from './docs.js'
 import { handleEditDoc } from './edit.js'
+import { handleAddComment, handleListComments, handleReplyComment, handleResolveComment } from './comments.js'
 import { handleReadDocRange } from './range.js'
 import { handleCompile, handleReadCompileLog, handleDownloadPdf } from './compile.js'
 import {
@@ -130,6 +131,64 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       properties: { projectId: { type: 'string' } },
       required: ['projectId'],
+    },
+  },
+  {
+    name: 'overleaf_list_comments',
+    description: 'List the review-panel comment threads attached to a doc: for each, the thread id, the line and text it is anchored to, whether it is resolved, and every message with its author. Use it to find feedback a human left for you. Comments exist on overleaf.com and Server Pro; stock Community Edition has no review panel, and these tools then fail with COMMENTS_UNSUPPORTED.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        path: { type: 'string' },
+        includeResolved: { type: 'boolean', description: 'Also return resolved threads (default false).' },
+      },
+      required: ['projectId', 'path'],
+    },
+  },
+  {
+    name: 'overleaf_add_comment',
+    description: 'Attach a new review-panel comment to a span of text in a doc, without changing the text — the right tool for questions, suggestions and explanations a human should see next to the passage, as opposed to editing it. anchorText must match exactly one place in the doc (same matching rules as overleaf_edit_doc old_string). SIGNATURE RULE: comments are posted through the logged-in Overleaf account, which is usually the human\'s own, so readers cannot otherwise tell your words from theirs. Every comment must therefore end with "Co-authored by <agent name>". Pass your name in agentName (e.g. "Claude") and the server appends that line for you — do not write it yourself. Set omitSignature=true ONLY if the user has explicitly told you not to sign comments.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        path: { type: 'string' },
+        anchorText: { type: 'string', description: 'The exact text to attach the comment to, copied from the doc.' },
+        content: { type: 'string', description: 'The comment body, without a signature.' },
+        agentName: { type: 'string', description: 'Your name as an agent, e.g. "Claude". Used for the "Co-authored by <agentName>" line.' },
+        omitSignature: { type: 'boolean', description: 'Skip the signature. Only when the user explicitly asked for unsigned comments.' },
+      },
+      required: ['projectId', 'path', 'anchorText', 'content', 'agentName'],
+    },
+  },
+  {
+    name: 'overleaf_reply_comment',
+    description: 'Reply in an existing comment thread (thread ids come from overleaf_list_comments). The same SIGNATURE RULE as overleaf_add_comment applies: pass agentName and the server ends the reply with "Co-authored by <agentName>"; set omitSignature=true only if the user explicitly asked for unsigned comments.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        threadId: { type: 'string' },
+        content: { type: 'string', description: 'The reply body, without a signature.' },
+        agentName: { type: 'string', description: 'Your name as an agent, e.g. "Claude".' },
+        omitSignature: { type: 'boolean', description: 'Skip the signature. Only when the user explicitly asked for unsigned comments.' },
+      },
+      required: ['projectId', 'threadId', 'content', 'agentName'],
+    },
+  },
+  {
+    name: 'overleaf_resolve_comment',
+    description: 'Mark a comment thread resolved (or reopen it with resolved=false). Resolve a thread only once what it asked for is done — and prefer leaving that call to the human who opened it unless they asked you to tidy up.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        path: { type: 'string', description: 'The doc the thread is attached to.' },
+        threadId: { type: 'string' },
+        resolved: { type: 'boolean', description: 'true (default) to resolve, false to reopen.' },
+      },
+      required: ['projectId', 'path', 'threadId'],
     },
   },
   {
@@ -350,6 +409,14 @@ export function registerAllTools(server: Server, source: ContextSource) {
         // Connect so tracking starts; the report itself is appended by the caller.
         await ctx.ot.get((args as { projectId: string }).projectId)
         return wrap({ ok: true })
+      case 'overleaf_list_comments':
+        return wrap(await handleListComments(ctx, args as unknown as Parameters<typeof handleListComments>[1]))
+      case 'overleaf_add_comment':
+        return wrap(await handleAddComment(ctx, args as unknown as Parameters<typeof handleAddComment>[1]))
+      case 'overleaf_reply_comment':
+        return wrap(await handleReplyComment(ctx, args as unknown as Parameters<typeof handleReplyComment>[1]))
+      case 'overleaf_resolve_comment':
+        return wrap(await handleResolveComment(ctx, args as unknown as Parameters<typeof handleResolveComment>[1]))
       case 'overleaf_compile':
         return wrap(
           await handleCompile(

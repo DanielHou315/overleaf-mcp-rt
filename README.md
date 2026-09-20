@@ -27,6 +27,7 @@ npx overleaf-mcp-rt@latest --help
   - [Discovery & read](#discovery--read)
   - [Edit](#edit)
   - [Working alongside humans](#working-alongside-humans)
+  - [Comments](#comments)
   - [Project tree CRUD](#project-tree-crud)
   - [Compile](#compile)
   - [Error envelope](#error-envelope)
@@ -137,7 +138,7 @@ A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `P
 
 ## Tools
 
-18 MCP tools, all prefixed `overleaf_*` so they remain unambiguous in hosts that don't auto-namespace by server name. Every tool's error responses use the [structured error envelope](#error-envelope).
+22 MCP tools, all prefixed `overleaf_*` so they remain unambiguous in hosts that don't auto-namespace by server name. Every tool's error responses use the [structured error envelope](#error-envelope).
 
 ### Discovery & read
 
@@ -197,6 +198,19 @@ File tree:
 
 This is the Overleaf analogue of a coding agent noticing a file changed on disk: the agent stays current without re-reading, and each change is reported once. Only docs the agent has read are reported; the agent's own edits never are.
 
+### Comments
+
+Review-panel comment threads, for feedback that belongs *next to* a passage rather than in it. **Available on overleaf.com and Server Pro.** Stock Community Edition has no review panel (the thread API ships in Server Pro's proprietary module), so there these tools fail up front with `COMMENTS_UNSUPPORTED` and change nothing.
+
+| Tool | Purpose |
+|---|---|
+| `overleaf_list_comments(projectId, path, includeResolved?)` | Threads attached to a doc: thread id, line, the text each is anchored to, resolved state, and every message with its author. Anchors follow the text live as people edit. |
+| `overleaf_add_comment(projectId, path, anchorText, content, agentName, omitSignature?)` | Attach a new comment to a span of text without changing it. `anchorText` must match exactly one place (same matching rules as `old_string`); a bad anchor creates nothing. |
+| `overleaf_reply_comment(projectId, threadId, content, agentName, omitSignature?)` | Reply in an existing thread. Refuses unknown thread ids rather than creating an orphan thread. |
+| `overleaf_resolve_comment(projectId, path, threadId, resolved?)` | Resolve a thread, or reopen it with `resolved: false`. |
+
+**Signature rule.** Comments are posted through the logged-in Overleaf account — on overleaf.com usually the human's *own* — so Overleaf shows the human as the author and nobody could otherwise tell the agent's words from theirs. Every agent comment therefore ends with `Co-authored by <agent name>`. This is stated in the tool descriptions and in the server's MCP `instructions`, and it is **enforced by the server**: `agentName` is required and the line is appended for the agent (never doubled). `omitSignature: true` exists for the case where the user has explicitly asked for unsigned comments.
+
 ### Project tree CRUD
 
 | Tool | Purpose |
@@ -243,6 +257,7 @@ Every tool error serializes as JSON inside an MCP `text` content block (with `is
 | `EDIT_AMBIGUOUS` | `old_string` matches more than one place; `context.lines` lists them. |
 | `DOC_CHANGED_EXTERNALLY` | A collaborator edited the doc after the agent last saw it, and the requested operation (`overleaf_write_doc`, `replace_lines`, `raw_ops`) depends on that stale view. Nothing was written. |
 | `DOC_NOT_READ` | `overleaf_write_doc` on a non-empty doc the agent never read. |
+| `COMMENTS_UNSUPPORTED` | The instance has no comment threads (stock Community Edition). Nothing was changed. |
 | `INVALID_CONFIG` | Missing or malformed `OVERLEAF_URL` / cookie / extra headers. |
 
 `retryable: true` is set for transient failures (`NETWORK_ERROR`); agents can use it to drive a retry loop. `hint` provides a one-line next step for the most common failures.
