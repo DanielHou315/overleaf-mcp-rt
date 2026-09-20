@@ -7,6 +7,7 @@ import { hostNameForUrl, loadConfig, loadHosts, saveHost } from './config.js'
 import { validateCookie, passportLogin, resolvePastedCookie, fetchStickyCookies } from './overleaf/auth.js'
 import { buildContext, runMcpServer, HostRegistry } from './mcp/server.js'
 import { browserLogin } from './overleaf/browser-login.js'
+import { installSkills, listSkills } from './skills.js'
 import { InvalidConfigError, OverleafError, AuthFailedError } from './errors.js'
 import { OverleafHttp } from './overleaf/http.js'
 import { OverleafRest } from './overleaf/rest.js'
@@ -25,6 +26,9 @@ Usage:
   overleaf-mcp-rt hosts          List configured hosts.
   overleaf-mcp-rt ls [--host <name>]         List accessible projects (smoke test).
   overleaf-mcp-rt diagnose [--host <name>]   Verify connectivity, auth, and OT handshake.
+  overleaf-mcp-rt skills         List the agent skills shipped with this package.
+  overleaf-mcp-rt skills install [--target <dir>]
+                                 Copy them into a skills directory (default ~/.claude/skills).
   overleaf-mcp-rt --help         Show this help.
 
 Several Overleaf instances can be configured side by side (run \`login\` once per
@@ -182,6 +186,15 @@ async function main() {
 
   if (cmd === 'login') {
     await runLogin(rest)
+    return
+  }
+
+  if (cmd === 'skills') {
+    if (rest[0] === 'install') {
+      for (const dest of installSkills(flagValue(rest, '--target'))) output.write(`installed ${dest}\n`)
+      return
+    }
+    for (const s of listSkills()) output.write(`${s.name}\t${s.description}\n`)
     return
   }
 
