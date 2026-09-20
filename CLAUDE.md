@@ -18,6 +18,8 @@ When making decisions, defer to the spec; if the spec is silent, raise it for di
 - v0.3 (REST tree mutations: create_doc, create_folder, upload_file, rename, move, delete_entity) — superseded by v0.4
 - v0.4 (polish: error mapping, per-doc write serialization, reconnect jitter, diagnose subcommand, pdfDownloadDomain, README auth examples) — superseded by v1.0
 - v1.0 (npm publish under AGPL-3.0 with Workshop attribution) — shipped
+- v1.1 (agent ergonomics: `overleaf_*` tools, `overleaf_edit_doc`, error envelope) — shipped
+- v1.2 (live collaboration: remote-op tracking + in-flight transform, `old_string`/`new_string` edits, `<external-changes>` reports) — in review
 - Implementation lives at the repo root (`src/`, `test/`, `scripts/`, `package.json`, …)
 
 ## Hard constraints
