@@ -50,9 +50,9 @@ For each version it starts Overleaf + Mongo + Redis (failing within seconds, wit
 
 ```bash
 npm run build
-LIVE_HOST=overleaf.com LIVE_PROJECT=Test npm run test:live
+LIVE_HOST=overleaf.com LIVE_PROJECT="My scratch project" npm run test:live
 ```
 
-`LIVE_HOST` is a name from `overleaf-mcp-rt hosts`; the session comes from your credentials file and is never printed. Here the suite is a guest: it never creates or deletes a project, works only inside a new folder `mcp-live-<stamp>` of the project named `LIVE_PROJECT` (default `Test` — use a scratch project), paces its calls, and deletes the folder at the end. The compile step compiles the project as it is and only requires a PDF if the compile succeeds.
+`LIVE_HOST` is a name from `overleaf-mcp-rt hosts`; the session comes from your credentials file and is never printed. Here the suite is a guest: it never creates or deletes a project, works only inside a new folder `mcp-live-<stamp>` of the project named `LIVE_PROJECT` (required, no default — use a scratch project), paces its calls, and deletes the folder at the end. The compile step compiles the project as it is and only requires a PDF if the compile succeeds.
 
 Without `LIVE_OVERLEAF_URL` or `LIVE_HOST` the suite skips itself, so `npm run test:live` is harmless by default. It is not part of `npm test` or CI: CI has no Overleaf to talk to.

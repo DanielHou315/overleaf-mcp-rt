@@ -18,7 +18,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
  *    password and creates its own project.
  *  - LIVE_HOST=<name>: a host from the credentials file (`overleaf-mcp-rt hosts`),
  *    e.g. overleaf.com. The suite never creates or deletes projects there: it
- *    works inside one scratch folder of the project named LIVE_PROJECT and
+ *    works inside one scratch folder of the project named LIVE_PROJECT (required) and
  *    removes that folder at the end.
  */
 export const LIVE_URL = process.env.LIVE_OVERLEAF_URL
@@ -105,7 +105,9 @@ export function acquireTarget(): Promise<Target> {
     const csrfToken = await validateCookie(cfg)
     const stickyCookies = await fetchStickyCookies(cfg)
     const http = new OverleafHttp({ ...cfg, csrfToken })
-    const wanted = process.env.LIVE_PROJECT ?? 'Test'
+    // No default: on someone's real account the project must be chosen deliberately.
+    const wanted = process.env.LIVE_PROJECT
+    if (!wanted) throw new Error('LIVE_HOST needs LIVE_PROJECT=<name of a scratch project on that host>')
     const project = (await new OverleafRest(http).listProjects()).find((p) => p.name === wanted)
     if (!project) throw new Error(`no project named "${wanted}" on ${cfg.url}: set LIVE_PROJECT to a scratch project`)
     return { url: cfg.url, sessionCookie: cfg.sessionCookie, csrfToken, extraHeaders: cfg.extraHeaders, stickyCookies, projectId: project.id, scratch }
