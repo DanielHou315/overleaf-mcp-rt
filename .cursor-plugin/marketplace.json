@@ -1,0 +1,23 @@
+{
+  "name": "overleaf-mcp-rt",
+  "version": "1.2.0",
+  "description": "The overleaf-mcp-rt plugin: a real-time Overleaf MCP server and the skills to use it well.",
+  "owner": {
+    "name": "Daniel Hou",
+    "url": "https://github.com/DanielHou315"
+  },
+  "plugins": [
+    {
+      "name": "overleaf-mcp-rt",
+      "source": "./",
+      "description": "Edit Overleaf projects live alongside human collaborators. Bundles the overleaf-mcp-rt MCP server (self-hosted Overleaf and overleaf.com) with skills for setup, safe co-editing, LaTeX workflow and review comments. Use when asked to read, write, review or compile anything on Overleaf.",
+      "version": "1.2.0",
+      "author": {
+        "name": "Daniel Hou",
+        "url": "https://github.com/DanielHou315"
+      },
+      "category": "productivity",
+      "keywords": ["overleaf", "latex", "mcp", "real-time", "collaboration", "writing"]
+    }
+  ]
+}

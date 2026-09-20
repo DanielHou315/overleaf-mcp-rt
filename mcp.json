@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "overleaf": {
+      "command": "npx",
+      "args": ["-y", "overleaf-mcp-rt"]
+    }
+  }
+}

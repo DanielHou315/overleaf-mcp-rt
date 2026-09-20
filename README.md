@@ -21,6 +21,7 @@ npx overleaf-mcp-rt@latest --help
 - [Install](#install)
 - [Quick start](#quick-start)
 - [Multiple hosts](#multiple-hosts)
+- [Agent skills](#agent-skills)
 - [MCP client config](#mcp-client-config)
 - [Sanity-check: `diagnose`](#sanity-check-diagnose)
 - [Tools](#tools)
@@ -37,6 +38,7 @@ npx overleaf-mcp-rt@latest --help
 - [Roadmap](#roadmap)
 - [FAQ](#faq)
 - [Source of truth](#source-of-truth)
+- [Developing](#developing)
 - [License](#license)
 - [Acknowledgements](#acknowledgements)
 
@@ -64,6 +66,18 @@ overleaf-mcp-rt --help
 ```
 
 Requires Node.js ≥ 20.
+
+### As a plugin (MCP server + skills together)
+
+This repository is itself an installable agent plugin: the MCP server wiring plus four [agent skills](#agent-skills) and two slash commands.
+
+| Harness | Install |
+|---|---|
+| **Claude Code** | `/plugin marketplace add DanielHou315/overleaf-mcp-rt` then `/plugin install overleaf-mcp-rt@overleaf-mcp-rt` |
+| **Cursor** | Add this repository as a plugin marketplace (it ships `.cursor-plugin/` manifests and `mcp.json`), then install `overleaf-mcp-rt` |
+| **Codex and other harnesses** | Register the MCP server (`codex mcp add overleaf -- npx -y overleaf-mcp-rt`, or see [MCP client config](#mcp-client-config)) and copy the skills: `npx -y overleaf-mcp-rt skills install --target <your skills dir>` |
+
+Then log in once from a terminal: `npx -y overleaf-mcp-rt login --url <your Overleaf> --browser`.
 
 ## Quick start
 
@@ -95,6 +109,21 @@ npx overleaf-mcp-rt diagnose --host overleaf.com
 - Credentials live in `~/.config/overleaf-mcp-rt/credentials.json` (mode 0600) as `{ "default": "<name>", "hosts": { "<name>": { url, session_cookie, extra_headers } } }`. The single-host file written by earlier versions is still read and is upgraded in place by the next `login`. `OVERLEAF_CREDENTIALS_FILE` relocates the file. `OVERLEAF_URL` / `OVERLEAF_SESSION_COOKIE` / `OVERLEAF_EXTRA_HEADERS` still work: they define (or override) the host for that URL and make it the default.
 - **Browser login (`--browser`, the default choice at the prompt):** Overleaf has no OAuth or device flow for third-party clients, and hosted instances put CAPTCHA, SSO or 2FA in front of the password form — so the login that always works is the real one in a real browser. `login --browser` launches your installed Chrome / Chromium / Edge / Brave with a **throwaway profile** (your everyday profile is never touched), opens the instance's login page, and waits. Once you're signed in it reads the session cookie over the DevTools protocol (which, unlike page JavaScript, can see `HttpOnly` cookies), validates it, saves it, closes the window and deletes the profile. With `--url` and `--browser` both given there are no prompts, so it also works from non-interactive runners. `OVERLEAF_BROWSER=/path/to/browser` picks a specific binary. `--cookie` and `--email` remain for headless machines.
 - **Pasting a cookie:** `login` accepts either the bare value or `name=value`, and works out whether the instance wants `overleaf_session2` (overleaf.com), `overleaf.sid` (CE ≥ 5) or `sharelatex.sid` (older CE). overleaf.com's password form is CAPTCHA-protected, so cookie paste is the only way in there: in your browser's devtools open Application → Cookies → `https://www.overleaf.com` and copy `overleaf_session2`.
+
+## Agent skills
+
+Small, on-demand instructions that teach an agent to use these tools well. They cost a few hundred tokens until one is actually needed.
+
+| Skill | Teaches |
+|---|---|
+| `overleaf-setup` | Installing, logging in (`--browser`), multiple hosts, `diagnose`, and what each auth/config error means. |
+| `overleaf-editing` | The read → `overleaf_edit_doc` loop, unique `old_string`s, small edits, reading `<external-changes>`, never reverting a human, why to avoid `overleaf_write_doc`. |
+| `overleaf-latex-workflow` | Finding the root file, matching project conventions, compile → read log → fix, leaving the project building, citations and figures. |
+| `overleaf-comments` | Comment vs. edit, the required `Co-authored by <agent name>` signature, replying and resolving, the fallback where comments don't exist. |
+
+Slash commands: `/overleaf-login` (walks the user through a browser login) and `/overleaf-status` (hosts, sessions, what to fix).
+
+They are plain `SKILL.md` folders in [`skills/`](skills/), written for any agent — no model- or vendor-specific instructions. Installed with the plugin, or copied anywhere with `overleaf-mcp-rt skills install [--target <dir>]` (default `~/.claude/skills`); `overleaf-mcp-rt skills` lists them.
 
 ## MCP client config
 
@@ -307,7 +336,7 @@ Pre-1.0 development happened under internal v0.1–v0.4 milestones; those are no
 
 ## Roadmap
 
-### v1.x — full CLI parity + agent-facing skills
+### v1.x — full CLI parity
 
 Today every tool listed above is reachable via MCP only; the bundled CLI just covers `login`, `ls`, and `diagnose`. Some agents (Codex CLI, Aider, terminal-only setups, anything that would rather shell out than pay tokens on an MCP envelope) are happier driving a normal command-line tool. Planned for v1.x:
 
@@ -317,7 +346,7 @@ Today every tool listed above is reachable via MCP only; the bundled CLI just co
   - `overleaf-mcp-rt file read <projectId> <path>` / `upload <projectId> <parentPath> <name> <file>`
   - `overleaf-mcp-rt fs mkdir | mv | rm | rename`
   - `overleaf-mcp-rt compile <projectId> [--draft] [--stop-on-first-error]` / `log` / `pdf -o out.pdf`
-- **Agent skills for the CLI** — a `skills/` directory shipped with the package, in [Claude Code skills](https://docs.claude.com/en/docs/claude-code/skills) format (also usable by other agents that ingest skill-style instructions). Each skill teaches the canonical Overleaf workflow on top of the CLI: edit-then-compile-then-read-log, upload-figure-and-cite, refactor-bibliography, recover-from-compile-error.
+- **CLI-flavoured skills** — the shipped [agent skills](#agent-skills) teach the MCP tools; once the CLI has parity they will cover it too.
 - **Same env, two surfaces** — `OVERLEAF_URL` / `OVERLEAF_SESSION_COOKIE` / `OVERLEAF_EXTRA_HEADERS` apply to both modes. The MCP server stays the default invocation for back-compat; the CLI is additive.
 
 ### Beyond v1.x
@@ -359,6 +388,37 @@ The `rt` suffix marks this as the **r**eal-**t**ime / OT-backed flavor, since ot
 ## Source of truth
 
 Design docs and per-phase plans live in [`docs/superpowers/`](docs/superpowers/). When in doubt, the design spec there is canonical.
+
+## Developing
+
+```bash
+npm ci && npm run typecheck && npm test && npm run build
+```
+
+**Repository layout = plugin layout.** The repo root is the plugin root, shared by every harness:
+
+```
+.claude-plugin/   plugin.json (declares the MCP server) + marketplace.json   → Claude Code
+.cursor-plugin/   plugin.json + marketplace.json; mcp.json at the root       → Cursor
+skills/  commands/                                                           → shared components (Codex reads skills/ directly)
+scripts/mcp-launch.mjs   starts the server for the plugin: local dist/ if built, else the npm release matching the plugin version
+src/  test/  dist/       the MCP server itself (npm package `overleaf-mcp-rt`)
+```
+
+There is deliberately **no `.mcp.json` at the root**: Claude Code would load it both as this project's config and as the plugin's, and `${CLAUDE_PLUGIN_ROOT}` only exists in the second case. The server is declared inline in `.claude-plugin/plugin.json` instead.
+
+**Testing the plugin from a checkout** (uses your local build, no publish needed):
+
+```bash
+npm run build
+claude plugin validate .
+```
+```
+/plugin marketplace add /absolute/path/to/overleaf-mcp-rt
+/plugin install overleaf-mcp-rt@overleaf-mcp-rt
+```
+
+`claude mcp list` should show `plugin:overleaf-mcp-rt:overleaf … ✔ Connected`. For a local install the plugin root is the checkout itself, so `npm run build` is picked up on the next session without reinstalling. The two `plugin.json` files, both `marketplace.json` files and `package.json` must agree on name/version/description — `test/unit/skills.test.ts` enforces it.
 
 ## License
 
