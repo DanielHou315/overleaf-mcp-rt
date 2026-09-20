@@ -228,6 +228,21 @@ describe('OtEngine on a history-ot doc', () => {
     expect(reported[0]!.after).toContain('>> ')
   })
 
+  it('predicts the server when our insert lands inside text a collaborator replaced (where ShareJS would differ)', async () => {
+    const server = new FakeOverleaf({ d1: 'lorem ipsum' }, historyOt)
+    const engine = await connectEngine(server)
+    await engine.joinDoc('d1')
+    server.holdAgentOps = true
+    const write = engine.updateDoc('d1', (t) => t.replace('su', 'sAu')) // insert between "s" and "u"
+    for (let i = 0; i < 50 && server.heldCount === 0; i++) await new Promise((r) => setTimeout(r, 0))
+    server.remoteSplice('d1', 8, 2, 'XY') // a person replaces "su" first
+    server.flush()
+    await write
+    expect(server.text('d1')).toBe('lorem ipXYAm')
+    expect(engine.readDoc('d1')).toBe(server.text('d1'))
+    expect(server.sock.emitsOf('joinDoc')).toHaveLength(1)
+  })
+
   for (const restampVersions of [false, true]) {
     it(`stays identical through random interleavings with stale collaborator ops (server ${restampVersions ? 'restamps' : 'does not restamp'} versions)`, async () => {
       const rand = lcg(restampVersions ? 99 : 1234)
