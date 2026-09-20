@@ -2,24 +2,43 @@ name: Release
 
 # Pushing a tag vX.Y.Z publishes that version to npm and creates the GitHub
 # release from its CHANGELOG.md section. See "Releasing" in CLAUDE.md / AGENTS.md.
-# Requires the repository secret NPM_TOKEN (an npm automation token).
+#
+# Publishing uses npm **trusted publishing** (OIDC): there is no npm token.
+# npmjs.com trusts this exact combination, configured under the package's
+# Settings → Trusted Publisher:
+#   repository   DanielHou315/overleaf-mcp-rt
+#   workflow     release.yml          (renaming this file breaks publishing)
+#   environment  npm                  (must equal `environment:` below)
+# Provenance attestations are generated automatically.
 on:
   push:
     tags: ['v*.*.*']
 
+# Nothing by default; the job asks for exactly what it needs.
+permissions: {}
+
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest # trusted publishing requires a GitHub-hosted runner
+    # Scopes npm's trust to this job, and is where protection rules live
+    # (allowed tags, required reviewers) — repo Settings → Environments → npm.
+    environment: npm
     permissions:
+      id-token: write # mint the OIDC token npm exchanges for publish rights
       contents: write # create the GitHub release
-      id-token: write # npm provenance
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: 20
-          cache: npm
+          # Trusted publishing needs Node >= 22.14 and npm >= 11.5.1. The package
+          # itself still supports Node >= 20; CI tests that.
+          node-version: 24
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false # never restore a cache into a release build
+      - name: npm must support trusted publishing
+        run: |
+          npm install -g npm@^11.5.1
+          npm --version
       - name: Tag must match package.json
         run: |
           version="$(node -p "require('./package.json').version")"
@@ -33,9 +52,7 @@ jobs:
       - run: npm run build
       - name: Release notes from CHANGELOG.md
         run: node scripts/changelog-section.mjs > "$RUNNER_TEMP/notes.md"
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm publish --access public
       - run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md"
         env:
           GH_TOKEN: ${{ github.token }}
