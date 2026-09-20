@@ -27,7 +27,8 @@ services:
 
   mongo:
     image: ${MONGO_IMAGE:?set by run-matrix.sh}
-    command: --replSet overleaf
+    # "--replSet=overleaf", or nothing for the versions that want a standalone Mongo (versions.conf).
+    command: ${MONGO_ARGS-}
     healthcheck:
       # Initiates the single-node replica set on first run, then reports healthy once it is primary.
       # Written for both shells: on an uninitiated set mongosh throws from rs.status(), the legacy
@@ -37,7 +38,7 @@ services:
         - >-
           ${MONGO_SHELL:?set by run-matrix.sh} --quiet --eval
           'var s = null; try { s = rs.status() } catch (e) { };
-          if (!s || !s.ok) rs.initiate({ _id: "overleaf", members: [{ _id: 0, host: "mongo:27017" }] });
+          if ("${MONGO_ARGS-}" && (!s || !s.ok)) rs.initiate({ _id: "overleaf", members: [{ _id: 0, host: "mongo:27017" }] });
           if (!db.isMaster().ismaster) quit(1)'
       interval: 5s
       timeout: 10s

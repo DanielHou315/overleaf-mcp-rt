@@ -57,13 +57,16 @@ describe('live matrix isolation', () => {
       .split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => l.split(/\s+/))
     expect(rows.length).toBeGreaterThan(0)
     for (const row of rows) {
-      expect(row, row.join(' ')).toHaveLength(6)
-      const [version, image, , shell, , envFile] = row as [string, string, string, string, string, string]
+      expect(row, row.join(' ')).toHaveLength(7)
+      const [version, image, , shell, , envFile, mongoArgs] = row as [string, string, string, string, string, string, string]
       expect(image).toBe(`sharelatex/sharelatex:${version}`)
       expect(['mongo', 'mongosh']).toContain(shell)
       expect(existsSync(join(live, envFile)), envFile).toBe(true)
       // 5.0 renamed every SHARELATEX_* variable and refuses to start with the old names.
-      expect(envFile).toBe(Number(version.split('.')[0]) >= 5 ? 'env.overleaf' : 'env.sharelatex')
+      const major = Number(version.split('.')[0])
+      expect(envFile).toBe(major >= 5 ? 'env.overleaf' : major === 4 ? 'env.sharelatex' : 'env.sharelatex-3x')
+      // 3.x: standalone Mongo (a 3.x migration reads from a secondary, which a one-node replica set lacks).
+      expect(mongoArgs).toBe(major >= 4 ? '--replSet=overleaf' : '-')
     }
     expect(new Set(rows.map((r) => r[0]!.split('.')[0]))).toEqual(new Set(['6', '5', '4', '3']))
   })

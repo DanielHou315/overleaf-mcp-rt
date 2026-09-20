@@ -37,10 +37,10 @@ fi
 # --- which versions -------------------------------------------------------------
 wanted=("$@")
 rows=()
-while read -r version image mongo shell redis envfile; do
+while read -r version image mongo shell redis envfile mongoargs; do
   [[ -z "${version:-}" || "$version" == \#* ]] && continue
   if [[ ${#wanted[@]} -eq 0 ]] || printf '%s\n' "${wanted[@]}" | grep -qxF "$version"; then
-    rows+=("$version $image $mongo $shell $redis $envfile")
+    rows+=("$version $image $mongo $shell $redis $envfile $mongoargs")
   fi
 done < "$here/versions.conf"
 [[ ${#rows[@]} -gt 0 ]] || die "no matching versions in versions.conf (asked for: ${wanted[*]:-all})"
@@ -125,8 +125,9 @@ export OVERLEAF_IMAGE=unused MONGO_IMAGE=unused MONGO_SHELL=unused REDIS_IMAGE=u
 results=()
 failed=0
 for row in "${rows[@]}"; do
-  read -r version image mongo shell redis envfile <<<"$row"
-  export OVERLEAF_VERSION="$version" OVERLEAF_IMAGE="$image" MONGO_IMAGE="$mongo" MONGO_SHELL="$shell" REDIS_IMAGE="$redis" OVERLEAF_ENV_FILE="$here/$envfile"
+  read -r version image mongo shell redis envfile mongoargs <<<"$row"
+  [[ "$mongoargs" == "-" ]] && mongoargs=""
+  export OVERLEAF_VERSION="$version" OVERLEAF_IMAGE="$image" MONGO_IMAGE="$mongo" MONGO_SHELL="$shell" MONGO_ARGS="$mongoargs" REDIS_IMAGE="$redis" OVERLEAF_ENV_FILE="$here/$envfile"
   project="olmcp-live-${version//./-}-$run_id"
   current_project="$project"
   dc() { docker compose -p "$project" -f "$compose_file" --profile tools "$@"; }
