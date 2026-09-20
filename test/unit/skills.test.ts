@@ -53,8 +53,13 @@ describe('plugin packaging', () => {
     expect(json('mcp.json').mcpServers.overleaf).toEqual({ command: 'npx', args: ['-y', 'overleaf-mcp-rt'] })
   })
 
+  it('has a changelog section for the version being shipped', () => {
+    expect(readFileSync(join(root, 'CHANGELOG.md'), 'utf-8')).toContain(`## [${pkg.version}]`)
+  })
+
   it('ships the skills in the npm package', () => {
     expect(pkg.files).toContain('skills')
+    expect(pkg.files).toContain('CHANGELOG.md')
   })
 
   it('gives every command a name and description', () => {

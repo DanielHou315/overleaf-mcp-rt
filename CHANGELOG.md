@@ -4,9 +4,22 @@ All notable changes to `overleaf-mcp-rt`. The format follows [Keep a Changelog](
 
 ## [Unreleased]
 
-Everything since 1.1.1. (1.2.0 was prepared but never published; its changes are included here.)
+## [2.0.0] — 2026-09-20
+
+First release since 1.1.1. (1.2.0 was prepared but never published; its changes are included here.) A major version because agent-visible behaviour changed in ways that can break existing prompts and integrations — see the next section.
 
 The theme: the server is now safe to use **while a human edits the same document in the browser**, it works against **overleaf.com** as well as self-hosted instances, and editing works the way coding agents edit files.
+
+### Breaking changes — migrating from 1.x
+
+- **`overleaf_write_doc` can now refuse.** It returns `DOC_NOT_READ` for a non-empty doc the agent hasn't read this session and `DOC_CHANGED_EXTERNALLY` if a collaborator edited it since. *Migrate:* read first, or switch to `overleaf_edit_doc`; pass `overwrite: true` to get the 1.x behaviour.
+- **Multi-edit calls are sequential.** Edits in one `overleaf_edit_doc` call now apply in order, each to the result of the previous; in 1.x they all resolved against the original text. *Migrate:* an `old_string`/`find` must match the text as it stands after the earlier edits in the same call.
+- **`overleaf_edit_doc` advertises a new schema** — `{old_string, new_string, replace_all?}`. The 1.x `mode`-based edits are still accepted at runtime, but clients that validate arguments against the published schema must move to the new shape. `replace_lines` and `raw_ops` are refused with `DOC_CHANGED_EXTERNALLY` if the doc changed since the agent last saw it.
+- **Tool results may carry a second text block**, `<external-changes>…</external-changes>`, after the JSON. *Migrate:* parse the first content block as JSON rather than concatenating all blocks.
+- **`OT_VERSION_DRIFT` is never emitted**, and new error codes exist (`EDIT_NO_MATCH`, `EDIT_AMBIGUOUS`, `DOC_CHANGED_EXTERNALLY`, `DOC_NOT_READ`, `COMMENTS_UNSUPPORTED`). "Anchor not found / ambiguous" used to be `OVERLEAF_GENERIC`.
+- **The server no longer exits on a bad or expired session.** It starts and reports `OVERLEAF_AUTH_FAILED` per tool call. Supervisors that relied on the exit code to detect auth failure should call a tool (or `diagnose`) instead.
+- **Credentials file v2.** `~/.config/overleaf-mcp-rt/credentials.json` is rewritten as `{default, hosts}` by the next `login`. 2.x reads the 1.x file; **1.x cannot read the 2.x file**, so don't mix versions against one config directory (`OVERLEAF_CREDENTIALS_FILE` can separate them).
+- **No project-level `.mcp.json` in the repository** — the repo root is now a plugin. If you ran the server from a checkout via that file, install the plugin from the checkout instead (README → Developing).
 
 ### Fixed
 
@@ -27,21 +40,16 @@ The theme: the server is now safe to use **while a human edits the same document
 - **Review-panel comments** (overleaf.com and Server Pro) — `overleaf_list_comments`, `overleaf_add_comment`, `overleaf_reply_comment`, `overleaf_resolve_comment`. Comments are posted through the logged-in account, so every agent comment ends with `Co-authored by <agent name>`; the server enforces this (`agentName` is required), with `omitSignature` for when the user explicitly opts out. Stock Community Edition has no review panel: these tools fail up front with `COMMENTS_UNSUPPORTED` and change nothing.
 - **The repository is an installable agent plugin** for Claude Code, Cursor and Codex: dual manifests (`.claude-plugin/`, `.cursor-plugin/`), shared `skills/` and `commands/`, and the MCP server wired in. Four concise, model-neutral skills (`overleaf-setup`, `overleaf-editing`, `overleaf-latex-workflow`, `overleaf-comments`) and two commands (`/overleaf-login`, `/overleaf-status`). `overleaf-mcp-rt skills install [--target <dir>]` copies the skills for any other harness.
 - MCP server `instructions`, giving every connecting agent the collaboration and signature rules.
-- `overleaf_read_doc` returns the doc `version`. `--version` flag. CI and tag-driven release workflows. `OVERLEAF_CREDENTIALS_FILE` relocates the credentials file.
+- `overleaf_read_doc` returns the doc `version`. `--version` flag. CI and tag-driven release workflows; `scripts/release-prep.mjs` sets the version everywhere in one step. `OVERLEAF_CREDENTIALS_FILE` relocates the credentials file.
 - New error codes: `EDIT_NO_MATCH`, `EDIT_AMBIGUOUS`, `DOC_CHANGED_EXTERNALLY`, `DOC_NOT_READ`, `COMMENTS_UNSUPPORTED`.
 - **Overleaf CE 6.x is supported** and is now the primary target (3.x – 6.x declared).
 - Live-testing helpers: `scripts/agent-session.mjs`, `scripts/latency-probe.mjs`, `scripts/smoke-stdio.mjs`.
 
 ### Changed
 
-- **`overleaf_write_doc` refuses to clobber** a doc the agent has not read this session (`DOC_NOT_READ`) or that a collaborator edited since (`DOC_CHANGED_EXTERNALLY`). Pass `overwrite: true` for the old behaviour. It now sends only the differing characters.
-- `unified_diff` edits no longer send "delete everything, insert everything". Positional edit modes (`replace_lines`, `raw_ops`) are refused if the doc shifted since the agent last saw it.
-- Multiple edits in one `overleaf_edit_doc` call now apply **sequentially**, each to the result of the previous (they used to all resolve against the original text).
-- v1.1 `mode`-based edits are still accepted but no longer advertised in the tool schema.
-
-### Removed
-
-- `OT_VERSION_DRIFT` is no longer emitted: version tracking makes the retry loop it reported on unnecessary. (The code remains in the type for compatibility.)
+- `overleaf_write_doc` sends only the differing characters instead of replacing the whole doc.
+- `unified_diff` edits no longer send "delete everything, insert everything".
+- (See *Breaking changes* above for the behavioural changes to `overleaf_write_doc` and `overleaf_edit_doc`.)
 
 ### Known limitations
 
