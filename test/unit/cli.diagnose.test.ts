@@ -55,14 +55,14 @@ describe('runDiagnose', () => {
     expect(lines.join('\n')).toMatch(/OVERLEAF_AUTH_FAILED/i)
   })
 
-  it('warns when CF-Access-style headers are detected but extraHeaders is empty', async () => {
+  it('says nothing about a CDN that sits in front of a working instance', async () => {
     server.use(
       http.get('https://o.example/project', () =>
         HttpResponse.html(csrfMetaHtml, { headers: { 'cf-ray': 'abc-LHR' } }),
       ),
     )
     const lines: string[] = []
-    await runDiagnose(
+    const result = await runDiagnose(
       {
         url: 'https://o.example',
         sessionCookie: 'overleaf_session2=abc',
@@ -70,6 +70,45 @@ describe('runDiagnose', () => {
       },
       { writeLine: (s) => lines.push(s), skipOt: true },
     )
-    expect(lines.join('\n')).toMatch(/⚠.*CF/i)
+    expect(result.ok).toBe(true)
+    expect(result.steps.every((s) => s.status === 'ok')).toBe(true)
+    expect(lines.join('\n')).not.toMatch(/⚠|proxy/i)
+  })
+
+  it('reports PROXY_AUTH_FAILED with a header hint when redirected to a proxy sign-in page', async () => {
+    server.use(
+      http.get('https://o.example/project', () =>
+        HttpResponse.text('', { status: 302, headers: { Location: 'https://team.cloudflareaccess.example/cdn-cgi/access/login' } }),
+      ),
+    )
+    const lines: string[] = []
+    const result = await runDiagnose(
+      { url: 'https://o.example', sessionCookie: 'overleaf_session2=abc', extraHeaders: {} },
+      { writeLine: (s) => lines.push(s), skipOt: true },
+    )
+    expect(result.ok).toBe(false)
+    const out = lines.join('\n')
+    expect(out).toMatch(/✗ REST handshake — PROXY_AUTH_FAILED/)
+    expect(out).toMatch(/team\.cloudflareaccess\.example/)
+    expect(out).toMatch(/login --header/)
+    expect(out).not.toMatch(/OVERLEAF_AUTH_FAILED/)
+  })
+
+  it('reports PROXY_AUTH_FAILED on a 403 challenge, and points at the configured headers when there are some', async () => {
+    server.use(
+      http.get('https://o.example/project', () =>
+        HttpResponse.text('blocked', { status: 403, headers: { 'cf-mitigated': 'challenge' } }),
+      ),
+    )
+    const lines: string[] = []
+    const result = await runDiagnose(
+      { url: 'https://o.example', sessionCookie: 'overleaf_session2=abc', extraHeaders: { 'CF-Access-Client-Id': 'x' } },
+      { writeLine: (s) => lines.push(s), skipOt: true },
+    )
+    expect(result.ok).toBe(false)
+    const out = lines.join('\n')
+    expect(out).toMatch(/PROXY_AUTH_FAILED/)
+    expect(out).toMatch(/configured extra headers/)
+    expect(out).not.toMatch(/login --header/)
   })
 })

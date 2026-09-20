@@ -29,6 +29,7 @@ The repo root is both the npm package and the plugin root.
 
 ```
 .claude-plugin/  .cursor-plugin/   plugin + marketplace manifests, one pair per harness
+.codex-plugin/                     Codex manifest + its MCP config (Codex reads .claude-plugin/marketplace.json as the catalog)
 mcp.json                           MCP config for Cursor (Claude Code's is inline in its plugin.json)
 skills/  commands/                 shared plugin components; skills also ship in the npm package
 scripts/mcp-launch.mjs             plugin entry point: local dist/ if built, else the matching npm release
@@ -89,9 +90,9 @@ npm run typecheck && npm test && npm run build
 
 ## Releasing
 
-`package.json` is the single source of the version: the build injects it into the CLI and MCP handshake, and the four plugin manifests (`.claude-plugin/` and `.cursor-plugin/`, `plugin.json` and `marketplace.json`) must match it — a test enforces that.
+`package.json` is the single source of the version: the build injects it into the CLI and MCP handshake, and the five plugin manifests (`plugin.json` and `marketplace.json` in `.claude-plugin/` and `.cursor-plugin/`, plus `.codex-plugin/plugin.json`) must match it — a test enforces that.
 
-1. Release PR: `node scripts/release-prep.mjs <x.y.z>` sets `package.json`, the lockfile and the four plugin manifests, and turns the changelog's `## [Unreleased]` into `## [x.y.z] — <date>` (leaving a fresh empty `## [Unreleased]` above it). Review the section; for a major version, lead with a *Breaking changes — migrating* list.
+1. Release PR: `node scripts/release-prep.mjs <x.y.z>` sets `package.json`, the lockfile and the five plugin manifests, and turns the changelog's `## [Unreleased]` into `## [x.y.z] — <date>` (leaving a fresh empty `## [Unreleased]` above it). Review the section; for a major version, lead with a *Breaking changes — migrating* list.
 2. After it merges: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. The `Release` workflow (triggered only by that tag push) checks the tag against `package.json`, runs typecheck/tests/build, publishes to npm, and creates the GitHub release from the changelog section.
 

@@ -13,19 +13,24 @@ const json = (path: string) => JSON.parse(readFileSync(join(root, path), 'utf-8'
 const frontmatter = (file: string) => /^---\n([\s\S]*?)\n---/.exec(readFileSync(file, 'utf-8'))?.[1] ?? ''
 
 /**
- * The repo root is one plugin published to several harnesses: Claude Code and
- * Cursor each read their own manifest + marketplace catalog, Codex and others
- * read skills/ directly. These keep the copies from drifting apart.
+ * The repo root is one plugin published to several harnesses: Claude Code,
+ * Cursor and Codex each read their own manifest (Codex shares Claude Code's
+ * marketplace catalog). These keep the copies from drifting apart.
  */
 describe('plugin packaging', () => {
   const claude = json('.claude-plugin/plugin.json')
   const cursor = json('.cursor-plugin/plugin.json')
+  const codex = json('.codex-plugin/plugin.json')
   const pkg = json('package.json')
 
-  it('both manifests agree with each other and with package.json', () => {
+  it('the manifests agree with each other and with package.json', () => {
     for (const key of ['name', 'displayName', 'version', 'description', 'license', 'keywords', 'author']) {
       expect(cursor[key], key).toEqual(claude[key])
     }
+    for (const key of ['name', 'version', 'description', 'license', 'keywords', 'author']) {
+      expect(codex[key], key).toEqual(claude[key])
+    }
+    expect(codex.interface.displayName).toBe(claude.displayName)
     expect(claude.name).toBe(pkg.name)
     expect(claude.version).toBe(pkg.version)
     expect(claude.license).toBe(pkg.license)
@@ -51,6 +56,17 @@ describe('plugin packaging', () => {
     })
     expect(existsSync(join(root, 'scripts', 'mcp-launch.mjs'))).toBe(true)
     expect(json('mcp.json').mcpServers.overleaf).toEqual({ command: 'npx', args: ['-y', 'overleaf-mcp-rt'] })
+  })
+
+  it('gives Codex a launcher path it can resolve: no plugin-root variable, cwd at the plugin root', () => {
+    // Codex installs happily from the Claude Code manifest but does not expand
+    // ${CLAUDE_PLUGIN_ROOT} in MCP args, so that server never starts. Its own manifest
+    // wins when present, and it resolves a relative cwd against the plugin root.
+    expect(codex.skills).toBe('./skills/')
+    expect(codex.mcpServers).toBe('./.codex-plugin/mcp.json')
+    expect(json('.codex-plugin/mcp.json').mcpServers.overleaf).toEqual({
+      command: 'node', args: ['./scripts/mcp-launch.mjs'], cwd: '.',
+    })
   })
 
   it('has a changelog section for the version being shipped', () => {

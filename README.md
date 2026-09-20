@@ -5,9 +5,15 @@
 [![license: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 [![Node ≥ 20](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](https://nodejs.org/)
 
-> **A real-time [Model Context Protocol](https://modelcontextprotocol.io/) server for self-hosted Overleaf — no git-bridge, no Server Pro, no fork required.**
+> **A real-time [Model Context Protocol](https://modelcontextprotocol.io/) server for Overleaf — self-hosted Community Edition / Server Pro *and* overleaf.com. No git-bridge, no fork, no extra infrastructure.**
 
-**Overleaf MCP** lets AI coding agents (Claude Code, Claude Desktop, Codex, Cursor, Continue, and any other MCP-compliant client) read, write, and compile LaTeX projects in any **personal or self-hosted Overleaf Community Edition** instance. Instead of relying on a git-bridge integration — a paid Server Pro feature that personal Overleaf installations don't have — it speaks Overleaf's **native operational-transform (OT) protocol over Socket.IO**, the same approach pioneered by [**Overleaf-Workshop**](https://github.com/iamhyc/Overleaf-Workshop). Edits flow live into the editor as collaborator operations, with no "file changed externally" toast and no extra infrastructure.
+**Overleaf MCP** lets AI coding agents (Claude Code, Claude Desktop, Codex, Cursor, Continue, and any other MCP-compliant client) read, edit, comment on and compile LaTeX projects on **your own Overleaf server or on [overleaf.com](https://www.overleaf.com)** — and on both at once, from one MCP server ([multiple hosts](#multiple-hosts)). Instead of going through a git-bridge — a paid feature that Community Edition installs don't have, and one that syncs in batches — it speaks Overleaf's **native operational-transform (OT) protocol over Socket.IO**, the approach pioneered by [**Overleaf-Workshop**](https://github.com/iamhyc/Overleaf-Workshop). The agent's edits arrive in the editor as a collaborator's keystrokes: no "file changed externally" toast, and people typing in the same file at the same time are never interrupted.
+
+<p align="center">
+  <img src="docs/live-coedit-demo.gif" width="502" alt="An agent filling in a list in the Overleaf editor while a person types further down the same file; both sets of changes appear live.">
+  <br>
+  <em>An agent and a person editing the same file at the same time. The person's comment lines are picked up by the agent as <code>&lt;external-changes&gt;</code> and acted on.</em>
+</p>
 
 Distributed on npm as **[`overleaf-mcp-rt`](https://www.npmjs.com/package/overleaf-mcp-rt)** — the `rt` suffix marks this as the **r**eal-**t**ime / OT-backed flavor, distinct from git-bridge–style Overleaf MCP servers.
 
@@ -17,6 +23,7 @@ npx overleaf-mcp-rt@latest --help
 
 ## Table of contents
 
+- [Supported Overleaf servers](#supported-overleaf-servers)
 - [Why "real-time"? Native OT vs git-bridge](#why-real-time-native-ot-vs-git-bridge)
 - [Install](#install)
 - [Quick start](#quick-start)
@@ -39,17 +46,38 @@ npx overleaf-mcp-rt@latest --help
 - [License](#license)
 - [Acknowledgements](#acknowledgements)
 
+## Supported Overleaf servers
+
+| | Self-hosted **Community Edition** | Self-hosted **Server Pro** | **overleaf.com** |
+|---|---|---|---|
+| Versions | stock 3.x – 6.x (6.x is the primary target) | same code base as CE ⁴ | current production |
+| Read / edit / create / move / delete, live co-editing | ✅ | ✅ | ✅ ¹ |
+| Compile, read the log, download the PDF | ✅ | ✅ | ✅ |
+| `<external-changes>` reports of what people changed | ✅ | ✅ | ✅ |
+| Review-panel comments | — ² | ✅ | ✅ |
+| Login | `--browser`, email + password, or cookie | same | `--browser` or cookie ³ |
+| Behind an auth proxy (Cloudflare Access, Basic Auth, …) | ✅ extra headers | ✅ extra headers | n/a |
+
+¹ Except projects Overleaf has already migrated to its new *history-OT* format — see the [FAQ](#faq). Those fail cleanly on document reads and writes; nothing is corrupted.<br>
+² Stock CE has no review panel, so the comment tools return `COMMENTS_UNSUPPORTED` without changing anything.<br>
+³ overleaf.com's password form is CAPTCHA-protected, so email + password login can't work there.<br>
+⁴ Server Pro shares CE's real-time and document services and the same review-panel API as overleaf.com, but has not been tested separately — reports welcome.
+
+Nothing is installed on, or changed in, the Overleaf server: the MCP server is just another logged-in client. Live co-editing was verified against Community Edition 6.0.0 and against production overleaf.com with a person typing in the browser throughout — both sides ended byte-identical.
+
 ## Why "real-time"? Native OT vs git-bridge
 
 |  | **Overleaf MCP** (native OT) | git-bridge–style MCP servers |
 |---|---|---|
-| Works on personal / Community Edition Overleaf | ✅ | ❌ (Server Pro only) |
-| Latency to editor | live (per patch) | minutes (git push + bridge sync) |
-| Server requirements | stock Overleaf CE 3.x – 6.x | Overleaf Server Pro + git-bridge license |
+| Works on Community Edition | ✅ | ❌ (git-bridge is a Server Pro feature) |
+| Works on overleaf.com | ✅ any plan you can log in to | only on plans with git integration |
+| Latency to editor | live (per patch, ~100 ms) | minutes (git push + bridge sync) |
+| Server requirements | none — stock CE 3.x – 6.x, Server Pro, or overleaf.com | Server Pro + git-bridge, or a paid overleaf.com plan |
 | "File changed externally" toast | never — edits arrive as co-author OT ops | yes — every git sync triggers it |
-| Auth model | session cookie | git over HTTPS / SSH |
+| Someone typing in the same file | both edits survive (OT) | merge conflicts |
+| Auth model | session cookie | git over HTTPS / token |
 
-If you run your own Overleaf Community Edition — in Docker, on a homelab, anywhere — and you want an AI coding agent to edit LaTeX in it with edits showing up live in the browser, this is the project for you.
+Whether your Overleaf runs in Docker on a homelab or is an overleaf.com account, if you want an AI coding agent to edit LaTeX in it with the edits showing up live in the browser, this is the project for you.
 
 ## Install
 
@@ -72,7 +100,8 @@ This repository is itself an installable agent plugin: the MCP server wiring plu
 |---|---|
 | **Claude Code** | `/plugin marketplace add DanielHou315/overleaf-mcp-rt` then `/plugin install overleaf-mcp-rt@overleaf-mcp-rt` |
 | **Cursor** | Add this repository as a plugin marketplace (it ships `.cursor-plugin/` manifests and `mcp.json`), then install `overleaf-mcp-rt` |
-| **Codex and other harnesses** | Register the MCP server (`codex mcp add overleaf -- npx -y overleaf-mcp-rt`, or see [MCP client config](#mcp-client-config)) and copy the skills: `npx -y overleaf-mcp-rt skills install --target <your skills dir>` |
+| **Codex** | `codex plugin marketplace add DanielHou315/overleaf-mcp-rt` then `codex plugin add overleaf-mcp-rt@overleaf-mcp-rt` (the slash commands arrive as skills) |
+| **Other harnesses** | Register the MCP server (see [MCP client config](#mcp-client-config)) and copy the skills: `npx -y overleaf-mcp-rt skills install --target <your skills dir>` |
 
 Then log in once from a terminal: `npx -y overleaf-mcp-rt login --url <your Overleaf> --browser`.
 
@@ -105,7 +134,7 @@ npx overleaf-mcp-rt diagnose --host overleaf.com
 - Each host has its own session, OT connections and external-change tracking. Hosts are authenticated on first use, and the credentials file is re-read on every call, so you can add or refresh a host while the MCP server is running.
 - Credentials live in `~/.config/overleaf-mcp-rt/credentials.json` (mode 0600) as `{ "default": "<name>", "hosts": { "<name>": { url, session_cookie, extra_headers } } }`. The single-host file written by earlier versions is still read and is upgraded in place by the next `login`. `OVERLEAF_CREDENTIALS_FILE` relocates the file. `OVERLEAF_URL` / `OVERLEAF_SESSION_COOKIE` / `OVERLEAF_EXTRA_HEADERS` still work: they define (or override) the host for that URL and make it the default.
 - **Browser login (`--browser`, the default choice at the prompt):** Overleaf has no OAuth or device flow for third-party clients, and hosted instances put CAPTCHA, SSO or 2FA in front of the password form — so the login that always works is the real one in a real browser. `login --browser` launches your installed Chrome / Chromium / Edge / Brave with a **throwaway profile** (your everyday profile is never touched), opens the instance's login page, and waits. Once you're signed in it reads the session cookie over the DevTools protocol (which, unlike page JavaScript, can see `HttpOnly` cookies), validates it, saves it, closes the window and deletes the profile. With `--url` and `--browser` both given there are no prompts, so it also works from non-interactive runners. `OVERLEAF_BROWSER=/path/to/browser` picks a specific binary. `--cookie` and `--email` remain for headless machines.
-- **Pasting a cookie:** `login` accepts either the bare value or `name=value`, and works out whether the instance wants `overleaf_session2` (overleaf.com), `overleaf.sid` (CE ≥ 5) or `sharelatex.sid` (older CE). overleaf.com's password form is CAPTCHA-protected, so cookie paste is the only way in there: in your browser's devtools open Application → Cookies → `https://www.overleaf.com` and copy `overleaf_session2`.
+- **Pasting a cookie:** `login` accepts either the bare value or `name=value`, and works out whether the instance wants `overleaf_session2` (overleaf.com), `overleaf.sid` (CE ≥ 5) or `sharelatex.sid` (older CE). Use it where `--browser` isn't possible (a headless machine): in your browser's devtools open Application → Cookies → `https://www.overleaf.com` and copy `overleaf_session2`.
 
 ## Agent skills
 
@@ -160,7 +189,7 @@ Output is a step-by-step report:
 ✓ OT handshake — publicId P.abc...
 ```
 
-A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `PROXY_AUTH_FAILED`, `PROJECT_ACCESS_DENIED`) so you know which layer to fix.
+A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `PROXY_AUTH_FAILED`, `PROJECT_ACCESS_DENIED`) so you know which layer to fix. When a step fails in a way that looks like an authentication proxy (a redirect to a sign-in page that isn't Overleaf's, or a 401/403) and no extra headers are configured, the report says so. A CDN that merely sits in front of a working instance is not reported — it needs no configuration.
 
 ## Tools
 
@@ -314,7 +343,7 @@ Track or contribute via [GitHub issues](https://github.com/DanielHou315/overleaf
 ## FAQ
 
 **Does this require Overleaf Server Pro?**
-No. It targets stock **Overleaf Community Edition** (3.x – 6.x). The whole point of this project is to give personal/self-hosted CE users the same agent-driven editing experience that Server Pro git-bridge users get.
+No. It works on stock **Overleaf Community Edition** (3.x – 6.x), on Server Pro, and on overleaf.com — see [Supported Overleaf servers](#supported-overleaf-servers). Only the comment tools need Server Pro or overleaf.com, because stock CE has no review panel.
 
 **Does this require git-bridge?**
 No. Edits are sent as live OT operations over Socket.IO — the same protocol Overleaf's web editor uses internally.
@@ -350,12 +379,13 @@ npm ci && npm run typecheck && npm test && npm run build
 ```
 .claude-plugin/   plugin.json (declares the MCP server) + marketplace.json   → Claude Code
 .cursor-plugin/   plugin.json + marketplace.json; mcp.json at the root       → Cursor
-skills/  commands/                                                           → shared components (Codex reads skills/ directly)
+.codex-plugin/    plugin.json + mcp.json (catalog: .claude-plugin/marketplace.json) → Codex
+skills/  commands/                                                           → shared components
 scripts/mcp-launch.mjs   starts the server for the plugin: local dist/ if built, else the npm release matching the plugin version
 src/  test/  dist/       the MCP server itself (npm package `overleaf-mcp-rt`)
 ```
 
-There is deliberately **no `.mcp.json` at the root**: Claude Code would load it both as this project's config and as the plugin's, and `${CLAUDE_PLUGIN_ROOT}` only exists in the second case. The server is declared inline in `.claude-plugin/plugin.json` instead.
+There is deliberately **no `.mcp.json` at the root**: Claude Code would load it both as this project's config and as the plugin's, and `${CLAUDE_PLUGIN_ROOT}` only exists in the second case. The server is declared inline in `.claude-plugin/plugin.json` instead. Codex does not expand that variable at all, which is why it has its own manifest: `.codex-plugin/mcp.json` starts the launcher by a relative path with `cwd` at the plugin root.
 
 **Testing the plugin from a checkout** (uses your local build, no publish needed):
 
@@ -368,7 +398,16 @@ claude plugin validate .
 /plugin install overleaf-mcp-rt@overleaf-mcp-rt
 ```
 
-`claude mcp list` should show `plugin:overleaf-mcp-rt:overleaf … ✔ Connected`. For a local install the plugin root is the checkout itself, so `npm run build` is picked up on the next session without reinstalling. The two `plugin.json` files, both `marketplace.json` files and `package.json` must agree on name/version/description — `test/unit/skills.test.ts` enforces it.
+`claude mcp list` should show `plugin:overleaf-mcp-rt:overleaf … ✔ Connected`. For a local install the plugin root is the checkout itself, so `npm run build` is picked up on the next session without reinstalling. Codex, against a throwaway config so your real one is untouched:
+
+```bash
+export CODEX_HOME=$(mktemp -d)
+codex plugin marketplace add /absolute/path/to/overleaf-mcp-rt
+codex plugin add overleaf-mcp-rt@overleaf-mcp-rt
+codex mcp list        # overleaf → node ./scripts/mcp-launch.mjs, cwd = the installed plugin root
+```
+
+The three `plugin.json` files, both `marketplace.json` files and `package.json` must agree on name/version/description — `test/unit/skills.test.ts` enforces it.
 
 ## License
 
