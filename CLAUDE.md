@@ -93,6 +93,8 @@ npm run typecheck && npm test && npm run build
 
 1. Release PR: `node scripts/release-prep.mjs <x.y.z>` sets `package.json`, the lockfile and the four plugin manifests, and turns the changelog's `## [Unreleased]` into `## [x.y.z] — <date>` (leaving a fresh empty `## [Unreleased]` above it). Review the section; for a major version, lead with a *Breaking changes — migrating* list.
 2. After it merges: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-3. The `Release` workflow checks the tag against `package.json`, runs typecheck/tests/build, publishes to npm with provenance, and creates the GitHub release from the changelog section. It needs the `NPM_TOKEN` repository secret.
+3. The `Release` workflow (triggered only by that tag push) checks the tag against `package.json`, runs typecheck/tests/build, publishes to npm, and creates the GitHub release from the changelog section.
+
+Publishing uses npm **trusted publishing** (OIDC) — there is no npm token or secret. npmjs.com → package Settings → Trusted Publisher is configured with repository `DanielHou315/overleaf-mcp-rt`, workflow `release.yml`, environment `npm`, and direct `npm publish` allowed. Those values are matched exactly against the running job, so **renaming `release.yml` or the job's `environment: npm` breaks publishing** until the trusted publisher is recreated to match. The `npm` GitHub environment (repo Settings → Environments) is where release protection lives: restrict it to `v*` tags, and add a required reviewer for a manual approval step. It needs Node ≥ 22.14 / npm ≥ 11.5.1, which is why the release job runs a newer Node than the package's minimum. Provenance is attached automatically.
 
 Versioning is semver over the public surface: MCP tool names/arguments/results/error codes, the CLI, and the credentials file format.
