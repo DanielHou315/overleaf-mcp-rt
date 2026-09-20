@@ -206,6 +206,8 @@ for row in "${rows[@]}"; do
       dc exec -T sharelatex sh -c 'cat /var/log/overleaf/*.log /var/log/sharelatex/*.log 2>/dev/null | grep -E "otUpdateError|error applying|does not match deleted text" | tail -5' || true
     fi
     if [[ "$status" != "PASS" ]]; then
+      echo "  --- errors logged by real-time and document-updater ---"
+      dc exec -T sharelatex sh -c 'for f in real-time document-updater; do for d in /var/log/overleaf /var/log/sharelatex; do [ -f $d/$f.log ] && grep -E "\"level\":(50|60)" $d/$f.log | tail -n 6; done; done' 2>/dev/null | cut -c1-600 || true
       echo "  --- last lines of the web log ---"
       dc exec -T sharelatex sh -c 'tail -n 25 /var/log/overleaf/web.log 2>/dev/null || tail -n 25 /var/log/sharelatex/web.log' 2>/dev/null | cut -c1-400 || true
     fi
