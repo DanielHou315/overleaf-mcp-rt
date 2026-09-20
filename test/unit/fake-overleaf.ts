@@ -48,6 +48,8 @@ export class FakeOverleaf {
        * is what this fake does by default. `true` models a server that fixes that.
        */
       restampVersions?: boolean
+      /** history-ot: acknowledge agent ops but store a (same-length) variation — a server that disagrees with our model. */
+      storesDifferently?: boolean
       /** history-ot: comments in the snapshot, per doc id. */
       historyOtComments?: Record<string, Array<{ id: string; ranges: Array<{ pos: number; length: number }> }>>
     } = {},
@@ -141,6 +143,7 @@ export class FakeOverleaf {
       for (let v = update.v; v < doc.version; v++) op = TextOp.transform(op, doc.textOps.get(v)!)[0]
       doc.textAt.set(doc.version, doc.text)
       doc.text = op.apply(doc.text)
+      if (this.opts.storesDifferently) doc.text = doc.text.split('').reverse().join('')
       doc.textOps.set(doc.version, op)
     } catch (err) {
       this.sock.simulate('otUpdateError', String((err as Error).message), { doc_id: docId })
@@ -237,9 +240,10 @@ export async function connectEngine(
 export async function makeToolHarness(
   docs: Record<string, string>,
   opts: ConstructorParameters<typeof FakeOverleaf>[1] = {},
+  engineOpts: Parameters<typeof connectEngine>[1] = {},
 ) {
   const server = new FakeOverleaf(docs, opts)
-  const engine = await connectEngine(server)
+  const engine = await connectEngine(server, engineOpts)
   const ot = {
     get: async () => engine,
     peek: () => engine,

@@ -7,6 +7,8 @@ import {
 } from '../../src/overleaf/history-ot.js'
 import { handleAddComment } from '../../src/mcp/tools/comments.js'
 import { handleEditDoc } from '../../src/mcp/tools/edit.js'
+import { handleReadDoc } from '../../src/mcp/tools/docs.js'
+import type { OverleafError } from '../../src/errors.js'
 import { FakeOverleaf, connectEngine, makeToolHarness } from './fake-overleaf.js'
 import { TextOp } from './text-operation-oracle.js'
 import { prng as lcg } from './prng.js'
@@ -125,6 +127,9 @@ describe('predicting the server\'s transform of an in-flight op', () => {
 
 describe('OtEngine on a history-ot doc', () => {
   const historyOt = { historyOt: true }
+  // The initial join plus the one-off check of the first write against a fresh snapshot.
+  // Any more would mean the engine lost track and had to rejoin.
+  const JOINS = 'one join + the first-write verification; more means it lost track'
 
   it('declares support when joining (the server refuses the doc otherwise) and reads the raw snapshot', async () => {
     const server = new FakeOverleaf({ d1: 'naïve café — 数学' }, historyOt)
@@ -191,7 +196,7 @@ describe('OtEngine on a history-ot doc', () => {
       expect(engine.readDoc('d1')).toBe(server.text('d1'))
     }
     expect(errors).toEqual([])
-    expect(server.sock.emitsOf('joinDoc')).toHaveLength(1)
+    expect(server.sock.emitsOf('joinDoc'), JOINS).toHaveLength(2)
   })
 
   // The live matrix found this: document-updater transforms a stale history-ot op but leaves
@@ -222,7 +227,7 @@ describe('OtEngine on a history-ot doc', () => {
     expect(engine.readDoc('d1')).toBe(server.text('d1'))
 
     expect(errors).toEqual([])
-    expect(server.sock.emitsOf('joinDoc'), 'followed live, never had to rejoin').toHaveLength(1)
+    expect(server.sock.emitsOf('joinDoc'), JOINS).toHaveLength(2)
     const reported = engine.collectExternalChanges().docs
     expect(reported).toHaveLength(1)
     expect(reported[0]!.after).toContain('>> ')
@@ -241,7 +246,7 @@ describe('OtEngine on a history-ot doc', () => {
     await write
     expect(server.text('d1')).toBe('lorem ipXYAm')
     expect(engine.readDoc('d1')).toBe(server.text('d1'))
-    expect(server.sock.emitsOf('joinDoc')).toHaveLength(1)
+    expect(server.sock.emitsOf('joinDoc'), JOINS).toHaveLength(2)
   })
 
   for (const restampVersions of [false, true]) {
@@ -277,7 +282,7 @@ describe('OtEngine on a history-ot doc', () => {
       }
       expect(staleOps, 'the scenario must actually contain stale ops').toBeGreaterThan(50)
       expect(errors).toEqual([])
-      expect(server.sock.emitsOf('joinDoc')).toHaveLength(1)
+      expect(server.sock.emitsOf('joinDoc'), JOINS).toHaveLength(2)
     })
   }
 
@@ -298,6 +303,44 @@ describe('OtEngine on a history-ot doc', () => {
     expect(joins).toBe(2)
     expect(baseline.text).toBe('abcd')
     expect(baseline.version).toBe(server.version('d1'))
+  })
+
+  it('is read-only unless the user opted in: a rejected write would disconnect people, and overleaf.com is unverified', async () => {
+    const server = new FakeOverleaf({ d1: 'hello' }, historyOt)
+    const engine = await connectEngine(server, { historyOtWrites: false })
+    expect((await engine.openDoc('d1')).text).toBe('hello')
+    server.remoteSplice('d1', 5, 0, ' world')
+    expect(engine.readDoc('d1')).toBe('hello world') // still follows collaborators
+    await expect(engine.updateDoc('d1', (t) => t + '!')).rejects.toMatchObject({ code: 'HISTORY_OT_WRITES_DISABLED' })
+    expect(server.sock.emitsOf('applyOtUpdate')).toHaveLength(0)
+    expect(server.text('d1')).toBe('hello world')
+    // A no-op "write" has nothing to refuse.
+    await expect(engine.updateDoc('d1', (t) => t)).resolves.toMatchObject({ ops: [] })
+  })
+
+  it('checks its first write against a fresh snapshot, once per doc', async () => {
+    const server = new FakeOverleaf({ d1: 'abc' }, historyOt)
+    const engine = await connectEngine(server)
+    await engine.updateDoc('d1', (t) => t + 'd')
+    expect(server.sock.emitsOf('joinDoc')).toHaveLength(2)
+    await engine.updateDoc('d1', (t) => t + 'e')
+    await engine.updateDoc('d1', (t) => t + 'f')
+    expect(server.sock.emitsOf('joinDoc')).toHaveLength(2)
+    expect(engine.readDoc('d1')).toBe('abcdef')
+  })
+
+  it('stops writing, loudly, when the server stored something other than what it predicted', async () => {
+    // A server whose history-ot differs from the one this was built against.
+    const server = new FakeOverleaf({ d1: 'lorem ipsum', d2: 'other' }, { historyOt: true, storesDifferently: true })
+    const engine = await connectEngine(server)
+    await expect(engine.updateDoc('d1', (t) => t.replace('ipsum', 'IPSUM')))
+      .rejects.toMatchObject({ code: 'HISTORY_OT_MISMATCH' })
+    // It now shows what the server really has, not its own prediction…
+    expect(engine.readDoc('d1')).toBe(server.text('d1'))
+    // …and refuses further history-ot writes, on any doc, without sending anything.
+    const sent = server.sock.emitsOf('applyOtUpdate').length
+    await expect(engine.updateDoc('d2', (t) => t + '!')).rejects.toMatchObject({ code: 'HISTORY_OT_MISMATCH' })
+    expect(server.sock.emitsOf('applyOtUpdate')).toHaveLength(sent)
   })
 
   it('never sends a surrogate: the server would reject the whole update and disconnect everyone', async () => {
@@ -339,6 +382,19 @@ describe('tools on a history-ot doc', () => {
     const r = await handleEditDoc(h.ctx, { projectId: 'p', path: 'a.tex', edits: [{ old_string: 'todo', new_string: 'done' }] })
     expect(r.ok).toBe(true)
     expect(h.server.text('a')).toBe('status: done')
+  })
+
+  it('without the opt-in, reads work and an edit is refused with instructions the agent can pass on', async () => {
+    const h = await makeToolHarness({ a: 'status: todo' }, { historyOt: true }, { historyOtWrites: false })
+    expect((await handleReadDoc(h.ctx, { projectId: 'p', path: 'a.tex' })).content).toBe('status: todo')
+    const refused = await handleEditDoc(h.ctx, { projectId: 'p', path: 'a.tex', edits: [{ old_string: 'todo', new_string: 'done' }] })
+      .catch((err: OverleafError) => err.toEnvelope())
+    expect(refused).toMatchObject({ code: 'HISTORY_OT_WRITES_DISABLED', retryable: false })
+    expect((refused as { hint: string }).hint).toMatch(/OVERLEAF_HISTORY_OT_WRITES=1/)
+    expect(h.server.text('a')).toBe('status: todo')
+    // A dry run is still allowed: it sends nothing.
+    const dry = await handleEditDoc(h.ctx, { projectId: 'p', path: 'a.tex', dryRun: true, edits: [{ old_string: 'todo', new_string: 'done' }] })
+    expect(dry.ok).toBe(true)
   })
 
   it('overleaf_add_comment refuses before creating a thread, since it could not anchor it', async () => {
