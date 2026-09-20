@@ -324,7 +324,12 @@ No. Edits are sent as live OT operations over Socket.IO — the same protocol Ov
 No. The MCP server connects as a regular collaborator, so other browser sessions see edits as a co-author typing.
 
 **Does it work with overleaf.com (the hosted SaaS)?**
-REST-backed tools (`list_projects`, `compile`, `download_pdf`) work against overleaf.com when you supply a session cookie. OT-backed reads/writes are designed and tested against Community Edition; the SaaS may diverge in protocol details and is not a targeted platform.
+Yes, for projects on Overleaf's classic OT pipeline. Verified live against production overleaf.com: reads, string edits, create/delete, external-change reports, and an agent editing while a human typed in the browser in three places — both sides ended byte-identical, with agent edits showing up in the browser editor ~100 ms after being sent. Things to know:
+
+- **Log in by pasting a cookie** (`login --url https://www.overleaf.com --name overleaf.com`); the password form is CAPTCHA-protected. If devtools shows two `overleaf_session2` cookies, use the one for the `.overleaf.com` domain — `login` validates whatever you paste before saving it.
+- The server fetches overleaf.com's load-balancer stickiness cookie (`GCLB`) automatically so the Socket.IO handshake and websocket reach the same backend.
+- **history-OT projects are not supported yet.** Overleaf is migrating projects to a new OT format (`otMigrationStage` > 0). For those, overleaf.com refuses `joinDoc` from clients that don't speak it, so doc reads/writes fail with a clear error (nothing is corrupted); REST-backed tools (`list_projects`, `compile`, `download_pdf`, tree operations) still work. You can check a project by looking for `<meta name="ol-otMigrationStage">` on its editor page.
+- You are automating your own account on a shared production service: keep edit rates humane. This project is not affiliated with Overleaf.
 
 **Does it work behind a reverse proxy?**
 Yes. Pass any required headers (Cloudflare Access service token, Basic Auth, oauth2-proxy / Authelia forwarded-user, etc.) via `OVERLEAF_EXTRA_HEADERS` as a JSON object — they're merged into both REST and Socket.IO. Run `overleaf-mcp-rt diagnose` after configuring; a missing header surfaces as `OVERLEAF_AUTH_FAILED` on the REST step or `OT connectionRejected` on the OT step.
