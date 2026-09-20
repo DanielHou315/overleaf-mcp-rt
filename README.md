@@ -58,7 +58,7 @@ npx overleaf-mcp-rt@latest --help
 | Login | `--browser`, email + password, or cookie | same | `--browser` or cookie ³ |
 | Behind an auth proxy (Cloudflare Access, Basic Auth, …) | ✅ extra headers | ✅ extra headers | n/a |
 
-¹ Except projects Overleaf has already migrated to its new *history-OT* format — see the [FAQ](#faq). Those fail cleanly on document reads and writes; nothing is corrupted.<br>
+¹ Including projects Overleaf has migrated to its newer *history-OT* document format (since 2.2.0): reading, editing and live co-editing work there; attaching comments to text does not yet — see the [FAQ](#faq).<br>
 ² Stock CE has no review panel, so the comment tools return `COMMENTS_UNSUPPORTED` without changing anything.<br>
 ³ overleaf.com's password form is CAPTCHA-protected, so email + password login can't work there.<br>
 ⁴ Server Pro shares CE's real-time and document services and the same review-panel API as overleaf.com, but has not been tested separately — reports welcome.
@@ -356,7 +356,7 @@ Yes, for projects on Overleaf's classic OT pipeline. Verified live against produ
 
 - **Log in with `login --url https://www.overleaf.com --name overleaf.com --browser`** — the password form is CAPTCHA-protected, so email/password login can't work there. Pasting a cookie also works; if devtools shows two `overleaf_session2` cookies, use the one for the `.overleaf.com` domain — `login` validates whatever you paste before saving it.
 - The server fetches overleaf.com's load-balancer stickiness cookie (`GCLB`) automatically so the Socket.IO handshake and websocket reach the same backend.
-- **history-OT projects are not supported yet.** Overleaf is migrating projects to a new OT format (`otMigrationStage` > 0). For those, overleaf.com refuses `joinDoc` from clients that don't speak it, so doc reads/writes fail with a clear error (nothing is corrupted); REST-backed tools (`list_projects`, `compile`, `download_pdf`, tree operations) still work. You can check a project by looking for `<meta name="ol-otMigrationStage">` on its editor page.
+- **Projects on Overleaf's newer document format (history-OT) work for reading and editing** (since 2.2.0). Overleaf is migrating projects (`otMigrationStage` > 0, visible as `<meta name="ol-otMigrationStage">` on the editor page) from the ShareJS text type to the operation format of its history system. The server detects the format per document and speaks it natively, including concurrent editing with people in the browser. Two limits: `overleaf_add_comment` refuses on such documents (`COMMENTS_UNSUPPORTED`, nothing changed) because anchoring a comment uses a different operation that has not been verified; and the implementation is verified against Community Edition 6.0 and 6.3 with a project switched to the format — no migrated project on overleaf.com was available to test against, so please report anything odd there.
 - You are automating your own account on a shared production service: keep edit rates humane. This project is not affiliated with Overleaf.
 
 **Does it work behind a reverse proxy?**

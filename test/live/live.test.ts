@@ -234,13 +234,37 @@ describe.skipIf(!liveEnabled || process.env.LIVE_PHASE === 'bootstrap').each(kin
       const stored = await freshRead(target, path)
       expect(a.engine.readDoc(docId)).toBe(stored)
       expect(b.engine.readDoc(docId)).toBe(stored)
+
+      // Random overlaps rarely hit the one case where the two protocols' algorithms disagree —
+      // an insert landing inside text the other side *replaced* — and a wrong prediction there
+      // keeps the length right, so nothing else would notice. Build it on purpose. Only the
+      // client whose op reaches the server second has to predict, and which one that is isn't
+      // ours to choose, so swap roles and firing order every round.
+      const corners = isBootstrap ? 24 : 8
+      for (let round = 0; round < corners; round++) {
+        const marker = `[${round}:lorem ipsum]`
+        await a.engine.updateDoc(docId, (t) => `${marker}\n${t}`)
+        await sleep(isBootstrap ? 120 : 600) // let the marker reach the other side before racing
+        const [replacer, inserter] = round % 2 === 0 ? [a, b] : [b, a]
+        const replace = () => replacer.engine.updateDoc(docId, (t) => t.replace(`${round}:lorem ipsum`, `${round}:lorem ipXYm`))
+        const insert = () => inserter.engine.updateDoc(docId, (t) => t.replace(`${round}:lorem ipsum`, `${round}:lorem ipsAum`))
+        await Promise.all(round % 4 < 2 ? [replace(), insert()] : [insert(), replace()])
+        await sleep(isBootstrap ? 150 : 600)
+        // Compare right away: a later rejoin would paper over a wrong prediction.
+        const viewA = a.engine.readDoc(docId)
+        const viewB = b.engine.readDoc(docId)
+        const truth = await freshRead(target, path)
+        expect(viewA, `round ${round}, client A`).toBe(truth)
+        expect(viewB, `round ${round}, client B`).toBe(truth)
+      }
+
       expect(a.otErrors.concat(b.otErrors)).toEqual([])
       expect(a.disconnects + b.disconnects).toBe(0)
     } finally {
       a.close()
       b.close()
     }
-  }, 180_000)
+  }, 300_000)
 
   it('refuses to overwrite text the agent has not seen, unless told to', async () => {
     const path = await newDoc('guard.tex', 'first line\n')
