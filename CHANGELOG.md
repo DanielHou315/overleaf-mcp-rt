@@ -4,27 +4,29 @@ All notable changes to `overleaf-mcp-rt`. The format follows [Keep a Changelog](
 
 ## [Unreleased]
 
-### Fixed
-
-All found by the new live test suite running against real Overleaf servers.
-
-- **Writing an emoji could later get everyone disconnected from the doc.** Overleaf cannot store characters outside the Basic Multilingual Plane: its document-updater rewrites every UTF-16 surrogate in inserted text to U+FFFD, and only acknowledges the sender without telling it. The engine kept the original characters in its snapshot, so its next delete across that text did not match the server's and was rejected — and Overleaf answers a rejected op by disconnecting every client on the doc. The engine now applies the same rewrite before sending, so both sides always agree, and `overleaf_edit_doc` / `overleaf_write_doc` add a `notes` entry telling the agent which characters could not be stored.
-- **`overleaf_read_compile_log` / `overleaf_download_pdf` right after `overleaf_compile` failed with "No log produced".** Overleaf allows one compile per project per second and answers a second one with `too-recently-compiled` and no output files. Compiles now wait out that window once and retry; they are also no longer flagged as editor auto-compiles (`auto_compile=true`), which the server throttles per user and server-wide; and the error names the compile status when there really is no log.
-- **`overleaf_read_compile_log` and `overleaf_download_pdf` returned 404 on overleaf.com.** A build's output only exists on the compile server that produced it; downloads now carry the `clsiserverid` and `compileGroup` from the compile response, as the editor does. Output served from a separate download domain is fetched without the session cookie or proxy headers, which belong to the Overleaf origin only.
-- `diagnose` no longer prints `⚠ reverse-proxy — CF detected but no extra headers configured` for an instance that merely sits behind a CDN and works. A proxy is now only mentioned when it is actually in the way: a redirect to a sign-in page on another host, or a 401 / 403 / challenge on `/project`, is reported as `PROXY_AUTH_FAILED` (previously a generic error or a misleading `OVERLEAF_AUTH_FAILED`) with a hint about `login --header` / `OVERLEAF_EXTRA_HEADERS`; and an OT handshake that fails after REST succeeded points at WebSocket forwarding.
-
 ### Added
 
 - **Codex plugin.** `.codex-plugin/plugin.json` makes the repository installable with `codex plugin marketplace add DanielHou315/overleaf-mcp-rt` + `codex plugin add overleaf-mcp-rt@overleaf-mcp-rt`: the MCP server, the four skills, and the two commands (which Codex turns into skills). Codex could already install from the Claude Code manifest, but it does not expand the plugin-root variable in MCP arguments, so the server silently never started.
 
-### Documentation
-
-- README leads with support for both self-hosted Overleaf (Community Edition / Server Pro) and overleaf.com, with a new *Supported Overleaf servers* table and a short recording of an agent and a person editing the same file.
-
-
 ### Changed
 
 - **Supported Community Edition range is now 4.x – 6.x** (was declared as 3.x – 6.x). The new version matrix showed that 3.x never worked: its real-time service predates the join-on-connect handshake this client uses, so the connection never completes (tested with 3.5.13). 4.2, 5.5, 6.0 and 6.3 pass the full live suite.
+
+### Fixed
+
+Found by the new live test suite running against real Overleaf servers:
+
+- **Writing an emoji could later get everyone disconnected from the doc.** Overleaf cannot store characters outside the Basic Multilingual Plane: its document-updater rewrites every UTF-16 surrogate in inserted text to U+FFFD, and only acknowledges the sender without telling it. The engine kept the original characters in its snapshot, so its next delete across that text did not match the server's and was rejected — and Overleaf answers a rejected op by disconnecting every client on the doc. The engine now applies the same rewrite before sending, so both sides always agree, and `overleaf_edit_doc` / `overleaf_write_doc` add a `notes` entry telling the agent which characters could not be stored.
+- **`overleaf_read_compile_log` / `overleaf_download_pdf` right after `overleaf_compile` failed with "No log produced".** Overleaf allows one compile per project per second and answers a second one with `too-recently-compiled` and no output files. Compiles now wait out that window once and retry; they are also no longer flagged as editor auto-compiles (`auto_compile=true`), which the server throttles per user and server-wide; and the error names the compile status when there really is no log.
+- **`overleaf_read_compile_log` and `overleaf_download_pdf` returned 404 on overleaf.com.** A build's output only exists on the compile server that produced it; downloads now carry the `clsiserverid` and `compileGroup` from the compile response, as the editor does. Output served from a separate download domain is fetched without the session cookie or proxy headers, which belong to the Overleaf origin only.
+
+Also:
+
+- `diagnose` no longer prints `⚠ reverse-proxy — CF detected but no extra headers configured` for an instance that merely sits behind a CDN and works. A proxy is now only mentioned when it is actually in the way: a redirect to a sign-in page on another host, or a 401 / 403 / challenge on `/project`, is reported as `PROXY_AUTH_FAILED` (previously a generic error or a misleading `OVERLEAF_AUTH_FAILED`) with a hint about `login --header` / `OVERLEAF_EXTRA_HEADERS`; and an OT handshake that fails after REST succeeded points at WebSocket forwarding.
+
+### Documentation
+
+- README leads with support for both self-hosted Overleaf (Community Edition / Server Pro) and overleaf.com, with a new *Supported Overleaf servers* table and a short recording of an agent and a person editing the same file.
 
 ### Testing
 

@@ -50,7 +50,7 @@ npx overleaf-mcp-rt@latest --help
 
 | | Self-hosted **Community Edition** | Self-hosted **Server Pro** | **overleaf.com** |
 |---|---|---|---|
-| Versions | stock 3.x – 6.x (6.x is the primary target) | same code base as CE ⁴ | current production |
+| Versions | stock 4.x – 6.x (6.x is the primary target; 3.x and older don't work) | same code base as CE ⁴ | current production |
 | Read / edit / create / move / delete, live co-editing | ✅ | ✅ | ✅ ¹ |
 | Compile, read the log, download the PDF | ✅ | ✅ | ✅ |
 | `<external-changes>` reports of what people changed | ✅ | ✅ | ✅ |
@@ -63,7 +63,7 @@ npx overleaf-mcp-rt@latest --help
 ³ overleaf.com's password form is CAPTCHA-protected, so email + password login can't work there.<br>
 ⁴ Server Pro shares CE's real-time and document services and the same review-panel API as overleaf.com, but has not been tested separately — reports welcome.
 
-Nothing is installed on, or changed in, the Overleaf server: the MCP server is just another logged-in client. Live co-editing was verified against Community Edition 6.0.0 and against production overleaf.com with a person typing in the browser throughout — both sides ended byte-identical.
+Nothing is installed on, or changed in, the Overleaf server: the MCP server is just another logged-in client. Live co-editing was verified against Community Edition 6.0.0 and against production overleaf.com with a person typing in the browser throughout — both sides ended byte-identical — and the [live test suite](test/live/README.md) runs the server against throw-away instances of CE 4.2, 5.5, 6.0 and 6.3.
 
 ## Why "real-time"? Native OT vs git-bridge
 
@@ -72,7 +72,7 @@ Nothing is installed on, or changed in, the Overleaf server: the MCP server is j
 | Works on Community Edition | ✅ | ❌ (git-bridge is a Server Pro feature) |
 | Works on overleaf.com | ✅ any plan you can log in to | only on plans with git integration |
 | Latency to editor | live (per patch, ~100 ms) | minutes (git push + bridge sync) |
-| Server requirements | none — stock CE 3.x – 6.x, Server Pro, or overleaf.com | Server Pro + git-bridge, or a paid overleaf.com plan |
+| Server requirements | none — stock CE 4.x – 6.x, Server Pro, or overleaf.com | Server Pro + git-bridge, or a paid overleaf.com plan |
 | "File changed externally" toast | never — edits arrive as co-author OT ops | yes — every git sync triggers it |
 | Someone typing in the same file | both edits survive (OT) | merge conflicts |
 | Auth model | session cookie | git over HTTPS / token |
@@ -343,7 +343,7 @@ Track or contribute via [GitHub issues](https://github.com/DanielHou315/overleaf
 ## FAQ
 
 **Does this require Overleaf Server Pro?**
-No. It works on stock **Overleaf Community Edition** (3.x – 6.x), on Server Pro, and on overleaf.com — see [Supported Overleaf servers](#supported-overleaf-servers). Only the comment tools need Server Pro or overleaf.com, because stock CE has no review panel.
+No. It works on stock **Overleaf Community Edition** (4.x – 6.x), on Server Pro, and on overleaf.com — see [Supported Overleaf servers](#supported-overleaf-servers). Only the comment tools need Server Pro or overleaf.com, because stock CE has no review panel.
 
 **Does this require git-bridge?**
 No. Edits are sent as live OT operations over Socket.IO — the same protocol Overleaf's web editor uses internally.
