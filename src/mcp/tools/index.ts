@@ -25,10 +25,10 @@ import { formatExternalChanges } from '../changes.js'
 
 // All MCP tool names are prefixed `overleaf_*` so they remain unambiguous in
 // hosts that don't auto-namespace by server name (Cursor, Continue, custom
-// stdio integrations, etc.). Claude Code's `mcp__<server>__<tool>` namespacing
-// applies on top — `overleaf_edit_doc` becomes `mcp__overleaf__overleaf_edit_doc`
-// in that host. Cosmetic redundancy there is the cost of robust naming
-// elsewhere.
+// stdio integrations, etc.). Hosts that do namespace (`mcp__<server>__<tool>`)
+// apply theirs on top — `overleaf_edit_doc` becomes
+// `mcp__overleaf__overleaf_edit_doc`. Cosmetic redundancy there is the cost of
+// robust naming elsewhere.
 const TOOL_DEFINITIONS = [
   {
     name: 'overleaf_list_projects',
@@ -148,7 +148,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'overleaf_add_comment',
-    description: 'Attach a new review-panel comment to a span of text in a doc, without changing the text — the right tool for questions, suggestions and explanations a human should see next to the passage, as opposed to editing it. anchorText must match exactly one place in the doc (same matching rules as overleaf_edit_doc old_string). SIGNATURE RULE: comments are posted through the logged-in Overleaf account, which is usually the human\'s own, so readers cannot otherwise tell your words from theirs. Every comment must therefore end with "Co-authored by <agent name>". Pass your name in agentName (e.g. "Claude") and the server appends that line for you — do not write it yourself. Set omitSignature=true ONLY if the user has explicitly told you not to sign comments.',
+    description: 'Attach a new review-panel comment to a span of text in a doc, without changing the text — the right tool for questions, suggestions and explanations a human should see next to the passage, as opposed to editing it. anchorText must match exactly one place in the doc (same matching rules as overleaf_edit_doc old_string). SIGNATURE RULE: comments are posted through the logged-in Overleaf account, which is usually the human\'s own, so readers cannot otherwise tell your words from theirs. Every comment must therefore end with "Co-authored by <agent name>". Pass the name you go by as an assistant in agentName and the server appends that line for you — do not write it yourself. Set omitSignature=true ONLY if the user has explicitly told you not to sign comments.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -156,7 +156,7 @@ const TOOL_DEFINITIONS = [
         path: { type: 'string' },
         anchorText: { type: 'string', description: 'The exact text to attach the comment to, copied from the doc.' },
         content: { type: 'string', description: 'The comment body, without a signature.' },
-        agentName: { type: 'string', description: 'Your name as an agent, e.g. "Claude". Used for the "Co-authored by <agentName>" line.' },
+        agentName: { type: 'string', description: 'The name you, the assistant, go by. Used for the "Co-authored by <agentName>" line.' },
         omitSignature: { type: 'boolean', description: 'Skip the signature. Only when the user explicitly asked for unsigned comments.' },
       },
       required: ['projectId', 'path', 'anchorText', 'content', 'agentName'],
@@ -171,7 +171,7 @@ const TOOL_DEFINITIONS = [
         projectId: { type: 'string' },
         threadId: { type: 'string' },
         content: { type: 'string', description: 'The reply body, without a signature.' },
-        agentName: { type: 'string', description: 'Your name as an agent, e.g. "Claude".' },
+        agentName: { type: 'string', description: 'The name you, the assistant, go by.' },
         omitSignature: { type: 'boolean', description: 'Skip the signature. Only when the user explicitly asked for unsigned comments.' },
       },
       required: ['projectId', 'threadId', 'content', 'agentName'],

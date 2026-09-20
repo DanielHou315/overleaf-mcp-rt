@@ -32,12 +32,9 @@ npx overleaf-mcp-rt@latest --help
   - [Project tree CRUD](#project-tree-crud)
   - [Compile](#compile)
   - [Error envelope](#error-envelope)
-- [v1.2 release notes](#v12-release-notes)
-- [v1.1 release notes](#v11-release-notes)
-- [v1.0 release notes](#v10-release-notes)
+- [Changelog](CHANGELOG.md)
 - [Roadmap](#roadmap)
 - [FAQ](#faq)
-- [Source of truth](#source-of-truth)
 - [Developing](#developing)
 - [License](#license)
 - [Acknowledgements](#acknowledgements)
@@ -52,7 +49,7 @@ npx overleaf-mcp-rt@latest --help
 | "File changed externally" toast | never — edits arrive as co-author OT ops | yes — every git sync triggers it |
 | Auth model | session cookie | git over HTTPS / SSH |
 
-If you run your own Overleaf Community Edition — in Docker, on a homelab, anywhere — and you want Claude Code or another AI agent to edit LaTeX in it with edits showing up live in the browser, this is the project for you.
+If you run your own Overleaf Community Edition — in Docker, on a homelab, anywhere — and you want an AI coding agent to edit LaTeX in it with edits showing up live in the browser, this is the project for you.
 
 ## Install
 
@@ -291,49 +288,6 @@ Every tool error serializes as JSON inside an MCP `text` content block (with `is
 
 `retryable: true` is set for transient failures (`NETWORK_ERROR`); agents can use it to drive a retry loop. `hint` provides a one-line next step for the most common failures.
 
-## v1.2 release notes
-
-v1.2 makes the server safe to use **while a human is editing the same doc in the browser**, and reworks editing around how coding agents edit files.
-
-- **Fixed: agent edits knocking browser sessions "out of sync".** The OT engine ignored collaborators' `otUpdateApplied` broadcasts, so once a human typed, the agent's next op was computed against stale text and submitted at a stale version. document-updater rejected it (`Delete component … does not match`), and Overleaf's real-time service answers a rejected op by sending `otUpdateError` to — and disconnecting — *every* client in the doc, discarding the human's unsaved keystrokes. The engine now applies every remote op to its snapshot, transforms its own in-flight op past ops that beat it to the server (a port of the ShareJS `text` type document-updater itself uses, so both sides compute the same result), and edits are evaluated against the live text at the instant of emit.
-- **Fixed: write confirmation.** The `applyOtUpdate` ack only means the op was queued. The engine now waits for the real confirmation (`otUpdateApplied {doc, v}`) and surfaces `otUpdateError` rejections, which were previously invisible.
-- **Fixed: parallel reads.** real-time fails a `joinDoc` that another join overtakes; joins are now serialized, and updates that arrive before a join's response are replayed onto the snapshot.
-- **`overleaf_edit_doc` is now `old_string` / `new_string` / `replace_all`** with uniqueness checks, sequential atomic multi-edit, whitespace-tolerant fallback matching, minimal-diff ops, and a unified diff in the result. v1.1 `mode`-based edits still work. `unified_diff` mode no longer sends "delete everything, insert everything".
-- **External-change awareness** — every tool result carries an `<external-changes>` block (diff + author + file-tree events) when collaborators changed something the agent has seen. New tool: `overleaf_check_changes`.
-- **`overleaf_write_doc` guards** — refuses to clobber unread or externally-changed docs (`DOC_NOT_READ`, `DOC_CHANGED_EXTERNALLY`); `overwrite: true` opts out.
-- **The server starts even when the cookie has expired.** Auth is checked on the first tool call and reported as `OVERLEAF_AUTH_FAILED` with a hint, instead of the process exiting before the MCP handshake (which hosts show as an unexplained "connection closed"). Running `overleaf-mcp-rt login` fixes a live session without restarting it.
-- `OT_VERSION_DRIFT` is no longer emitted: version tracking makes the retry loop it reported on unnecessary.
-- **Overleaf CE 6.x is supported.** The protocol work in this release was done against the 6.0.0 `real-time` / `document-updater` sources and verified live on a 6.0.0 instance: an agent making 60 rapid edits while a human typed in three places in the browser ended byte-identical on both sides, with no out-of-sync modal and no OT errors in the server logs. 6.x is now the primary target; 5.x was the original one, and the wire protocol used here is unchanged across 3.x – 6.x. (An automated multi-version test matrix is planned separately.)
-
-## v1.1 release notes
-
-v1.1 adds the agent-ergonomics surface that the v1.0 raw OT-ops surface made painful to use, and renames every tool with an `overleaf_*` prefix:
-
-- **All tools renamed `overleaf_*`** — `read_doc` → `overleaf_read_doc`, `compile` → `overleaf_compile`, etc. The prefix keeps tool names unambiguous in MCP hosts that don't auto-namespace by server (Cursor, Continue, custom stdio). Claude Code's `mcp__<server>__<tool>` namespacing still applies on top.
-- **`overleaf_edit_doc` tool** — anchor-based `replace` (with `unique`/`first`/`all`/Nth occurrence semantics), `insert_before` / `insert_after`, line-range `replace_lines`, `unified_diff`, and `raw_ops` as an escape hatch. All edits in one call resolve against the same baseline and apply atomically; `dryRun: true` returns the resolved OT ops without emitting them. **This is the recommended editing surface** — `apply_patch` (the v1.0 raw-ops tool) was removed because `overleaf_edit_doc`'s `raw_ops` mode is a strict superset.
-- **`overleaf_read_doc_range`** — fetch a substring of a doc by line range or offset/length, with `totalLines` / `totalChars` returned alongside. Saves an agent the round-trip cost of fetching a 50 KB doc just to verify a 200-byte edit.
-- **`overleaf_read_file as=base64`** — opt into a `{contentBase64, mimeType}` envelope even for image MIMEs, so an agent can copy a binary asset between two project paths via `overleaf_upload_file` without losing access to the bytes.
-- **Edit summaries** — `overleaf_write_doc` and `overleaf_edit_doc` both return `{versionBefore, versionAfter, charsBefore, charsAfter, charsDelta, opsApplied}`. Agents can sanity-check edits without re-reading the doc.
-- **Structured error envelope** — tool errors serialize as `{code, message, context, retryable, hint?}` JSON instead of a flat string. New error codes: `OT_DELETE_MISMATCH` and `OT_VERSION_DRIFT`.
-- **Wire-format change for errors:** error responses are now JSON inside `text` content; v1.0 emitted `${code}: ${message}` plain text. v1.0 clients that regex-parsed error strings will need to switch to JSON parsing.
-- **Defensive validation** — `overleaf_edit_doc` pre-validates ops against the local baseline before emit, so a wrong offset surfaces immediately instead of via an opaque server reject (or, worse, silent no-op).
-- **Removed: `apply_patch`** — replaced by `overleaf_edit_doc` with `mode: 'raw_ops'`. Migration: wrap your old `ops` array in `{edits: [{mode: 'raw_ops', ops: [...]}]}`.
-
-## v1.0 release notes
-
-This is the first stable release on npm. It bundles everything from the prior internal development phases (read-only, OT writes, tree mutations, polish) into a single shipping package:
-
-- **Live OT reads & writes** — `read_doc`, `write_doc`, and a raw-OT `apply_patch` (later collapsed into `overleaf_edit_doc` in v1.1) flow through Overleaf's native operational-transform pipeline. Other connected browser sessions see edits as a co-author typing, not as a "file changed externally" toast.
-- **Full tree CRUD over REST** — `create_doc`, `create_folder`, `upload_file`, `rename`, `move`, `delete_entity`.
-- **Compile pipeline** — `compile`, `read_compile_log`, `download_pdf` (returned as a binary MCP resource).
-- **`diagnose` CLI subcommand** — stepped report (config → REST → reverse-proxy → projects → OT) so failed setups surface the exact failing layer with a typed error code.
-- **Reverse-proxy auth pass-through** — `OVERLEAF_EXTRA_HEADERS` is merged into both the REST client and the Socket.IO handshake.
-- **Resilience** — per-doc write serialization (no baseline races), reconnect with jitter, OT-engine eviction signaling, WHATWG-URL normalization (subpath-safe), `pdfDownloadDomain` honored for overleaf.com REST flows.
-- **Compatibility** — stock Overleaf CE 3.x – 6.x. **No fork** of `sharelatex/sharelatex` and no patched server image required, so you can keep upgrading Overleaf cleanly.
-- **License** — AGPL-3.0-or-later (required because the OT/auth client is ported from Overleaf-Workshop).
-
-Pre-1.0 development happened under internal v0.1–v0.4 milestones; those are now collapsed into v1.0 and per-phase notes are kept only in [`docs/superpowers/plans/`](docs/superpowers/) for historical context.
-
 ## Roadmap
 
 ### v1.x — full CLI parity
@@ -385,10 +339,6 @@ Overleaf-Workshop is the VS Code extension that pioneered speaking Overleaf's na
 **Why is the npm package `overleaf-mcp-rt` if the project is called "Overleaf MCP"?**
 The `rt` suffix marks this as the **r**eal-**t**ime / OT-backed flavor, since other "overleaf-mcp"–style packages may use git-bridge or zip-snapshot approaches. The shorter "Overleaf MCP" is the human-readable project name.
 
-## Source of truth
-
-Design docs and per-phase plans live in [`docs/superpowers/`](docs/superpowers/). When in doubt, the design spec there is canonical.
-
 ## Developing
 
 ```bash
@@ -428,7 +378,7 @@ claude plugin validate .
 
 This project ports significant portions of the auth and OT code from [**Overleaf-Workshop**](https://github.com/iamhyc/Overleaf-Workshop) by iamhyc and contributors. Used under AGPL-3.0.
 
-Built on the [Model Context Protocol](https://modelcontextprotocol.io/) by Anthropic.
+Built on the [Model Context Protocol](https://modelcontextprotocol.io/).
 
 ---
 

@@ -144,6 +144,9 @@ vite.config.ts.timestamp-*
 .vite/
 
 # Project-specific
+# Working notes (design specs, implementation plans) written while developing
+# with AI agents. Kept locally; not part of the repository.
+/docs/superpowers/
 # Local clone of overleaf/overleaf monorepo used as research reference; not tracked
 /overleaf/
 .DS_Store
