@@ -1,5 +1,5 @@
 import type { ServerContext } from '../server.js'
-import { NotFoundError, OverleafError } from '../../errors.js'
+import { DocChangedExternallyError, DocNotReadError, NotFoundError } from '../../errors.js'
 import type { DownloadedBytes } from '../../overleaf/rest.js'
 
 export interface WriteSummary {
@@ -14,14 +14,14 @@ export interface WriteSummary {
 export async function handleReadDoc(
   ctx: ServerContext,
   input: { projectId: string; path: string },
-): Promise<{ content: string }> {
+): Promise<{ content: string; version: number }> {
   const engine = await ctx.ot.get(input.projectId)
   const docId = engine.pathToDocId(input.path)
   if (docId === null) {
     throw new NotFoundError(`No doc at ${input.path} in project ${input.projectId}`)
   }
-  const baseline = await engine.joinDoc(docId)
-  return { content: baseline.text }
+  const baseline = await engine.openDoc(docId)
+  return { content: baseline.text, version: baseline.version }
 }
 
 export async function handleReadFile(
@@ -38,34 +38,44 @@ export async function handleReadFile(
 
 export async function handleWriteDoc(
   ctx: ServerContext,
-  input: { projectId: string; path: string; content: string },
+  input: { projectId: string; path: string; content: string; overwrite?: boolean },
 ): Promise<{ ok: true; summary: WriteSummary }> {
   const engine = await ctx.ot.get(input.projectId)
   const docId = engine.pathToDocId(input.path)
   if (docId === null) {
     throw new NotFoundError(`No doc at ${input.path} in project ${input.projectId}`)
   }
-  const before = await engine.joinDoc(docId)
-  const charsBefore = before.text.length
-  const versionBefore = before.version
-  await engine.writeDoc(docId, input.content)
-  const after = engine.getBaseline(docId)
-  if (!after) {
-    throw new OverleafError(
-      'OVERLEAF_GENERIC',
-      `getBaseline returned undefined for docId ${docId} after a successful write`,
-    )
-  }
+  // A whole-doc replace is built from what the agent last read. If that view
+  // is missing or stale, writing it would silently revert a collaborator's
+  // work — the same reason coding agents refuse to overwrite a file that
+  // changed on disk since they read it. The check runs against the live text
+  // at the instant the op is emitted.
+  const result = await engine.updateDoc(docId, (text) => {
+    if (!input.overwrite) {
+      if (engine.hasUnseenExternalChanges(docId)) {
+        throw new DocChangedExternallyError(
+          `${input.path} was edited by a collaborator after you last read it. Nothing was written.`,
+          { path: input.path },
+        )
+      }
+      if (!engine.hasSeen(docId) && text !== '') {
+        throw new DocNotReadError(
+          `${input.path} has content you have not read in this session. Nothing was written.`,
+          { path: input.path },
+        )
+      }
+    }
+    return input.content
+  })
   return {
     ok: true,
     summary: {
-      versionBefore,
-      versionAfter: after.version,
-      charsBefore,
-      charsAfter: input.content.length,
-      charsDelta: input.content.length - charsBefore,
-      opsApplied: 1,
+      versionBefore: result.versionBefore,
+      versionAfter: result.versionAfter,
+      charsBefore: result.textBefore.length,
+      charsAfter: result.textAfter.length,
+      charsDelta: result.textAfter.length - result.textBefore.length,
+      opsApplied: result.ops.length === 0 ? 0 : 1,
     },
   }
 }
-

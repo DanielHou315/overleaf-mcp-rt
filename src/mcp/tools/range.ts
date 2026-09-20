@@ -29,7 +29,7 @@ export async function handleReadDocRange(
   if (docId === null) {
     throw new NotFoundError(`No doc at ${input.path} in project ${input.projectId}`)
   }
-  const baseline = await engine.joinDoc(docId)
+  const baseline = await engine.openDoc(docId)
   const text = baseline.text
   const lines = text.split('\n')
   const totalLines = lines.length

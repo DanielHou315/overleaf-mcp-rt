@@ -8,7 +8,7 @@
 
 A Model Context Protocol (MCP) server that exposes an Overleaf Community Edition project to AI coding agents (Claude Desktop, Claude Code, Codex via MCP, Cursor, etc.) **without** requiring a git intermediary. The server speaks Overleaf's native realtime operational-transform (OT) protocol so that agent edits flow through the editor as live collaborator operations rather than triggering "file changed externally" toasts.
 
-The server runs as a stdio subprocess of the AI client, on the user's local machine. **No modifications to the Overleaf CE deployment are required.** It works against any stock CE instance (3.x → 5.x) and against `overleaf.com`.
+The server runs as a stdio subprocess of the AI client, on the user's local machine. **No modifications to the Overleaf CE deployment are required.** It works against any stock CE instance (3.x → 6.x) and against `overleaf.com`.
 
 ## Goals
 

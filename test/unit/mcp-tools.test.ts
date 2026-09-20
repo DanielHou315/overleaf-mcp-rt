@@ -163,6 +163,7 @@ describe('write_doc tool (OT)', () => {
       return [null]
     })
 
+    await handleReadDoc(ctx, { projectId: 'p1', path: 'main.tex' })
     const out = await handleWriteDoc(ctx, {
       projectId: 'p1',
       path: 'main.tex',

@@ -25,9 +25,11 @@ npx overleaf-mcp-rt@latest --help
 - [Tools](#tools)
   - [Discovery & read](#discovery--read)
   - [Edit](#edit)
+  - [Working alongside humans](#working-alongside-humans)
   - [Project tree CRUD](#project-tree-crud)
   - [Compile](#compile)
   - [Error envelope](#error-envelope)
+- [v1.2 release notes](#v12-release-notes)
 - [v1.1 release notes](#v11-release-notes)
 - [v1.0 release notes](#v10-release-notes)
 - [Roadmap](#roadmap)
@@ -42,7 +44,7 @@ npx overleaf-mcp-rt@latest --help
 |---|---|---|
 | Works on personal / Community Edition Overleaf | ✅ | ❌ (Server Pro only) |
 | Latency to editor | live (per patch) | minutes (git push + bridge sync) |
-| Server requirements | stock Overleaf CE 3.x – 5.x | Overleaf Server Pro + git-bridge license |
+| Server requirements | stock Overleaf CE 3.x – 6.x | Overleaf Server Pro + git-bridge license |
 | "File changed externally" toast | never — edits arrive as co-author OT ops | yes — every git sync triggers it |
 | Auth model | session cookie | git over HTTPS / SSH |
 
@@ -116,7 +118,7 @@ A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `P
 
 ## Tools
 
-16 MCP tools, all prefixed `overleaf_*` so they remain unambiguous in hosts that don't auto-namespace by server name. Every tool's error responses use the [structured error envelope](#error-envelope).
+17 MCP tools, all prefixed `overleaf_*` so they remain unambiguous in hosts that don't auto-namespace by server name. Every tool's error responses use the [structured error envelope](#error-envelope).
 
 ### Discovery & read
 
@@ -124,7 +126,8 @@ A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `P
 |---|---|
 | `overleaf_list_projects` | List accessible projects. |
 | `overleaf_get_project_tree(projectId)` | Folder + file tree (live, OT-backed). |
-| `overleaf_read_doc(projectId, path)` | Full text doc content (live, OT-backed). |
+| `overleaf_read_doc(projectId, path)` | Full text doc content. Live: reflects collaborators' keystrokes up to the instant of the call. |
+| `overleaf_check_changes(projectId)` | What collaborators changed since the agent's last tool call. The same report rides along on every other tool result (see [Working alongside humans](#working-alongside-humans)), so this is only for polling. |
 | `overleaf_read_doc_range(projectId, path, startLine?, endLine?, startOffset?, length?)` | Substring of a doc by 1-indexed inclusive line range or by char offset/length. Returns `totalLines` / `totalChars`. Use this to verify a small region after an edit instead of re-fetching the whole doc. |
 | `overleaf_read_file(projectId, path, as?)` | Binary file. Default `as=auto`: native MCP image content for image MIMEs, text content for text MIMEs, resource for PDFs, base64 envelope otherwise. Pass `as=base64` to force the `{contentBase64, mimeType}` envelope for any type — useful for programmatic copy via `overleaf_upload_file`. |
 
@@ -132,18 +135,47 @@ A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `P
 
 | Tool | Purpose |
 |---|---|
-| **`overleaf_edit_doc(projectId, path, edits[], dryRun?)`** | **The recommended editing surface.** High-level text edits with six modes: `replace`, `insert_before`, `insert_after`, `replace_lines`, `unified_diff`, and `raw_ops`. All edits in a single call apply atomically (all or none). Pass `dryRun: true` to preview the resolved OT ops without applying. Returns a write summary. |
-| `overleaf_write_doc(projectId, path, content)` | Replace a text doc; flows as OT ops, no toast. Returns a summary `{versionBefore, versionAfter, charsBefore, charsAfter, charsDelta, opsApplied}`. Use when you have the entire desired contents in hand. |
+| **`overleaf_edit_doc(projectId, path, edits[], dryRun?)`** | **The recommended editing surface.** Exact string replacement, the way coding agents edit files: each edit is `{old_string, new_string, replace_all?}`. Returns a write summary plus a unified `diff` of what changed. |
+| `overleaf_write_doc(projectId, path, content, overwrite?)` | Replace a whole doc. Only the differing characters are sent. Refused if the agent hasn't read the doc this session (`DOC_NOT_READ`) or a collaborator edited it since (`DOC_CHANGED_EXTERNALLY`), unless `overwrite: true`. |
 
-#### `overleaf_edit_doc` modes
+#### `overleaf_edit_doc`
 
-| Mode | Use case |
-|---|---|
-| `replace` | Anchor-based find-and-replace. Default `occurrence: 'unique'` errors if the find-string appears 0 or >1 times; pass `'all'`, `'first'`, or an integer N to disambiguate. |
-| `insert_before` / `insert_after` | Insert text immediately before / after a unique anchor. |
-| `replace_lines` | Replace a 1-indexed inclusive line range with new text. |
-| `unified_diff` | Apply a `diff -u`-style patch (the format LLMs emit fluently). Cannot be combined with anchor-based edits in the same call. |
-| `raw_ops` | Caller-supplied OT ops `[{p, i?, d?}]`. Each op pre-validated against the local baseline; mismatched `d`-strings throw [`OT_DELETE_MISMATCH`](#error-envelope) before any server call. Cannot be combined with anchor-based edits. |
+```json
+{ "projectId": "…", "path": "main.tex", "edits": [
+  { "old_string": "Results are good.", "new_string": "Results are excellent." },
+  { "old_string": "\\cite{old}", "new_string": "\\cite{new}", "replace_all": true }
+] }
+```
+
+- `old_string` must identify **exactly one** place in the doc, or the call fails with `EDIT_AMBIGUOUS` and the matching line numbers — add surrounding text, or set `replace_all`.
+- Edits apply **in order**, each to the result of the previous, and **atomically**: if any edit fails, nothing is sent.
+- Text is addressed by content, never by offset, and matched against the **live** doc at the instant the op is emitted. An agent edit therefore composes with whatever a human is typing elsewhere in the file. If the human changed the very text being targeted, the call fails with `EDIT_NO_MATCH`, reports the closest region, and the attached `<external-changes>` block shows their edit.
+- If `old_string` isn't found verbatim, a match that differs only in trailing whitespace, indentation, or line wrapping is accepted **when unambiguous** (reported in `notes`). The replaced span is always the doc's real text.
+- The op sent to Overleaf is the minimal character diff, so collaborators' cursors and selections outside the changed characters are undisturbed.
+- To insert, use an anchor as `old_string` and repeat it in `new_string`. To delete, pass `new_string: ""`. `dryRun: true` returns the diff and resolved OT ops without sending.
+
+Legacy v1.1 edits carrying a `mode` field (`replace`, `insert_before`, `insert_after`, `replace_lines`, `unified_diff`, `raw_ops`) are still accepted. `replace_lines` and `raw_ops` address the doc by position, so they are refused with `DOC_CHANGED_EXTERNALLY` if a collaborator edited the doc since the agent last saw it.
+
+### Working alongside humans
+
+The server keeps a live, server-confirmed copy of every doc the agent has opened by applying each collaborator's OT op as it arrives, so the agent always edits the current version. On top of that it remembers what the agent has *been shown*. Whenever those differ, the next tool result for that project (success or error) gets an extra text block:
+
+```
+<external-changes>
+Collaborators changed this project since your last tool call. …
+
+main.tex — edited by Ada Lovelace, 12s ago (v41 → v45)
+@@ -1,3 +1,3 @@
+ \section{Introduction}
+-We study the problem of widgets.
++We study the problem of gadgets.
+
+File tree:
+- created doc appendix.tex by Ada Lovelace
+</external-changes>
+```
+
+This is the Overleaf analogue of a coding agent noticing a file changed on disk: the agent stays current without re-reading, and each change is reported once. Only docs the agent has read are reported; the agent's own edits never are.
 
 ### Project tree CRUD
 
@@ -187,10 +219,27 @@ Every tool error serializes as JSON inside an MCP `text` content block (with `is
 | `NOT_FOUND` | No such doc/file/folder at the given path. |
 | `NETWORK_ERROR` | Transport-level failure (`retryable: true`). |
 | `OT_DELETE_MISMATCH` | A `d`-string in `overleaf_edit_doc`'s `raw_ops` mode didn't match the doc at `p`. Pre-validated client-side, so you find out before the round-trip. |
-| `OT_VERSION_DRIFT` | The doc moved under us during a write retry (`retryable: true`). |
+| `EDIT_NO_MATCH` | `old_string` (or a `unified_diff`'s context) isn't in the live doc. `context.closest` holds the most similar region. |
+| `EDIT_AMBIGUOUS` | `old_string` matches more than one place; `context.lines` lists them. |
+| `DOC_CHANGED_EXTERNALLY` | A collaborator edited the doc after the agent last saw it, and the requested operation (`overleaf_write_doc`, `replace_lines`, `raw_ops`) depends on that stale view. Nothing was written. |
+| `DOC_NOT_READ` | `overleaf_write_doc` on a non-empty doc the agent never read. |
 | `INVALID_CONFIG` | Missing or malformed `OVERLEAF_URL` / cookie / extra headers. |
 
-`retryable: true` is set for transient failures (`NETWORK_ERROR`, `OT_VERSION_DRIFT`); agents can use it to drive a retry loop. `hint` provides a one-line next step for the most common failures.
+`retryable: true` is set for transient failures (`NETWORK_ERROR`); agents can use it to drive a retry loop. `hint` provides a one-line next step for the most common failures.
+
+## v1.2 release notes
+
+v1.2 makes the server safe to use **while a human is editing the same doc in the browser**, and reworks editing around how coding agents edit files.
+
+- **Fixed: agent edits knocking browser sessions "out of sync".** The OT engine ignored collaborators' `otUpdateApplied` broadcasts, so once a human typed, the agent's next op was computed against stale text and submitted at a stale version. document-updater rejected it (`Delete component … does not match`), and Overleaf's real-time service answers a rejected op by sending `otUpdateError` to — and disconnecting — *every* client in the doc, discarding the human's unsaved keystrokes. The engine now applies every remote op to its snapshot, transforms its own in-flight op past ops that beat it to the server (a port of the ShareJS `text` type document-updater itself uses, so both sides compute the same result), and edits are evaluated against the live text at the instant of emit.
+- **Fixed: write confirmation.** The `applyOtUpdate` ack only means the op was queued. The engine now waits for the real confirmation (`otUpdateApplied {doc, v}`) and surfaces `otUpdateError` rejections, which were previously invisible.
+- **Fixed: parallel reads.** real-time fails a `joinDoc` that another join overtakes; joins are now serialized, and updates that arrive before a join's response are replayed onto the snapshot.
+- **`overleaf_edit_doc` is now `old_string` / `new_string` / `replace_all`** with uniqueness checks, sequential atomic multi-edit, whitespace-tolerant fallback matching, minimal-diff ops, and a unified diff in the result. v1.1 `mode`-based edits still work. `unified_diff` mode no longer sends "delete everything, insert everything".
+- **External-change awareness** — every tool result carries an `<external-changes>` block (diff + author + file-tree events) when collaborators changed something the agent has seen. New tool: `overleaf_check_changes`.
+- **`overleaf_write_doc` guards** — refuses to clobber unread or externally-changed docs (`DOC_NOT_READ`, `DOC_CHANGED_EXTERNALLY`); `overwrite: true` opts out.
+- **The server starts even when the cookie has expired.** Auth is checked on the first tool call and reported as `OVERLEAF_AUTH_FAILED` with a hint, instead of the process exiting before the MCP handshake (which hosts show as an unexplained "connection closed"). Running `overleaf-mcp-rt login` fixes a live session without restarting it.
+- `OT_VERSION_DRIFT` is no longer emitted: version tracking makes the retry loop it reported on unnecessary.
+- **Overleaf CE 6.x is supported.** The protocol work in this release was done against the 6.0.0 `real-time` / `document-updater` sources and verified live on a 6.0.0 instance: an agent making 60 rapid edits while a human typed in three places in the browser ended byte-identical on both sides, with no out-of-sync modal and no OT errors in the server logs. 6.x is now the primary target; 5.x was the original one, and the wire protocol used here is unchanged across 3.x – 6.x. (An automated multi-version test matrix is planned separately.)
 
 ## v1.1 release notes
 
@@ -216,7 +265,7 @@ This is the first stable release on npm. It bundles everything from the prior in
 - **`diagnose` CLI subcommand** — stepped report (config → REST → reverse-proxy → projects → OT) so failed setups surface the exact failing layer with a typed error code.
 - **Reverse-proxy auth pass-through** — `OVERLEAF_EXTRA_HEADERS` is merged into both the REST client and the Socket.IO handshake.
 - **Resilience** — per-doc write serialization (no baseline races), reconnect with jitter, OT-engine eviction signaling, WHATWG-URL normalization (subpath-safe), `pdfDownloadDomain` honored for overleaf.com REST flows.
-- **Compatibility** — stock Overleaf CE 3.x – 5.x. **No fork** of `sharelatex/sharelatex` and no patched server image required, so you can keep upgrading Overleaf cleanly.
+- **Compatibility** — stock Overleaf CE 3.x – 6.x. **No fork** of `sharelatex/sharelatex` and no patched server image required, so you can keep upgrading Overleaf cleanly.
 - **License** — AGPL-3.0-or-later (required because the OT/auth client is ported from Overleaf-Workshop).
 
 Pre-1.0 development happened under internal v0.1–v0.4 milestones; those are now collapsed into v1.0 and per-phase notes are kept only in [`docs/superpowers/plans/`](docs/superpowers/) for historical context.
@@ -247,7 +296,7 @@ Track or contribute via [GitHub issues](https://github.com/DanielHou315/overleaf
 ## FAQ
 
 **Does this require Overleaf Server Pro?**
-No. It targets stock **Overleaf Community Edition** (3.x – 5.x). The whole point of this project is to give personal/self-hosted CE users the same agent-driven editing experience that Server Pro git-bridge users get.
+No. It targets stock **Overleaf Community Edition** (3.x – 6.x). The whole point of this project is to give personal/self-hosted CE users the same agent-driven editing experience that Server Pro git-bridge users get.
 
 **Does this require git-bridge?**
 No. Edits are sent as live OT operations over Socket.IO — the same protocol Overleaf's web editor uses internally.

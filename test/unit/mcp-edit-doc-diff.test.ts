@@ -1,31 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import { handleEditDoc } from '../../src/mcp/tools/edit.js'
-import type { ServerContext } from '../../src/mcp/server.js'
+import { makeToolHarness } from './fake-overleaf.js'
 
-function makeCtx(initial: string) {
-  let text = initial
-  let version = 1
+async function makeCtx(initial: string) {
+  // Real engine against a fake Overleaf, so tool tests exercise the wire protocol too.
+  const h = await makeToolHarness({ file: initial }, { startVersion: 1 })
   return {
-    text: () => text,
-    ctx: {
-      rest: null as never, http: null as never,
-      ot: {
-        get: async () => ({
-          pathToDocId: () => 'docX',
-          joinDoc: async () => ({ docId: 'docX', text, version }),
-          getBaseline: () => ({ text, version }),
-          applyOps: async (_: string, ops: Array<{ p: number; i?: string; d?: string }>) => {
-            let out = text
-            for (const op of ops) {
-              if (op.i !== undefined) out = out.slice(0, op.p) + op.i + out.slice(op.p)
-              else if (op.d !== undefined) out = out.slice(0, op.p) + out.slice(op.p + op.d.length)
-            }
-            text = out
-            version += 1
-          },
-        }),
-      },
-    } as ServerContext,
+    ...h,
+    text: () => h.server.text('file'),
+    version: () => h.server.docs.get('file')!.version,
   }
 }
 
@@ -40,7 +23,7 @@ const DIFF = `--- a/file.tex
 
 describe('edit_doc unified_diff', () => {
   it('applies a unified diff', async () => {
-    const h = makeCtx('first line\nsecond line\nthird line\n')
+    const h = await makeCtx('first line\nsecond line\nthird line\n')
     await handleEditDoc(h.ctx, {
       projectId: 'p', path: 'file.tex',
       edits: [{ mode: 'unified_diff', diff: DIFF }],
@@ -49,7 +32,7 @@ describe('edit_doc unified_diff', () => {
   })
 
   it('errors when the context lines do not match the doc', async () => {
-    const h = makeCtx('totally different content\n')
+    const h = await makeCtx('totally different content\n')
     await expect(
       handleEditDoc(h.ctx, {
         projectId: 'p', path: 'file.tex',
@@ -59,7 +42,7 @@ describe('edit_doc unified_diff', () => {
   })
 
   it('rejects mixing unified_diff with anchor-based modes', async () => {
-    const h = makeCtx('first line\nsecond line\n')
+    const h = await makeCtx('first line\nsecond line\n')
     await expect(
       handleEditDoc(h.ctx, {
         projectId: 'p', path: 'file.tex',
@@ -72,7 +55,7 @@ describe('edit_doc unified_diff', () => {
   })
 
   it('rejects mixing unified_diff with raw_ops', async () => {
-    const h = makeCtx('hello\n')
+    const h = await makeCtx('hello\n')
     await expect(
       handleEditDoc(h.ctx, {
         projectId: 'p', path: 'file.tex',
@@ -95,7 +78,7 @@ describe('edit_doc unified_diff', () => {
 `
 
   it('applies a unified diff to a doc with no trailing newline', async () => {
-    const h = makeCtx('first line\nsecond line')
+    const h = await makeCtx('first line\nsecond line')
     await handleEditDoc(h.ctx, {
       projectId: 'p', path: 'file.tex',
       edits: [{ mode: 'unified_diff', diff: DIFF_NO_TRAILING_NEWLINE }],

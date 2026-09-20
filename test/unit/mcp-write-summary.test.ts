@@ -1,45 +1,21 @@
 import { describe, it, expect } from 'vitest'
-import { handleWriteDoc } from '../../src/mcp/tools/docs.js'
-import type { ServerContext } from '../../src/mcp/server.js'
+import { handleReadDoc, handleWriteDoc } from '../../src/mcp/tools/docs.js'
+import { makeToolHarness } from './fake-overleaf.js'
 
-function makeCtx(initial: string) {
-  let text = initial
-  let version = 3
+async function makeCtx(initial: string) {
+  // Real engine against a fake Overleaf, so tool tests exercise the wire protocol too.
+  const h = await makeToolHarness({ a: initial }, { startVersion: 3 })
   return {
-    text: () => text,
-    version: () => version,
-    ctx: {
-      rest: null as never,
-      http: null as never,
-      ot: {
-        get: async () => ({
-          pathToDocId: () => 'docX',
-          joinDoc: async () => ({ docId: 'docX', text, version }),
-          writeDoc: async (_: string, newText: string) => {
-            if (newText === text) return  // mirror OtEngine.writeDoc no-op
-            text = newText
-            version += 1
-          },
-          applyOps: async (_: string, ops: Array<{ p: number; i?: string; d?: string }>) => {
-            // emulate ops on the text
-            let out = text
-            for (const op of ops) {
-              if (op.i !== undefined) out = out.slice(0, op.p) + op.i + out.slice(op.p)
-              else if (op.d !== undefined) out = out.slice(0, op.p) + out.slice(op.p + op.d.length)
-            }
-            text = out
-            version += 1
-          },
-          getBaseline: () => ({ text, version }),
-        }),
-      },
-    } as ServerContext,
+    ...h,
+    text: () => h.server.text('a'),
+    version: () => h.server.docs.get('a')!.version,
   }
 }
 
 describe('write_doc summary', () => {
   it('returns charsBefore, charsAfter, versionBefore, versionAfter, charsDelta', async () => {
-    const harness = makeCtx('hello')
+    const harness = await makeCtx('hello')
+    await handleReadDoc(harness.ctx, { projectId: 'p', path: 'a.tex' })
     const out = await handleWriteDoc(harness.ctx, { projectId: 'p', path: 'a.tex', content: 'hello world' })
     expect(out.ok).toBe(true)
     expect(out.summary?.charsBefore).toBe(5)
@@ -50,7 +26,8 @@ describe('write_doc summary', () => {
   })
 
   it('reports zero charsDelta and unchanged version when content equals current text', async () => {
-    const harness = makeCtx('hello')
+    const harness = await makeCtx('hello')
+    await handleReadDoc(harness.ctx, { projectId: 'p', path: 'a.tex' })
     const out = await handleWriteDoc(harness.ctx, { projectId: 'p', path: 'a.tex', content: 'hello' })
     expect(out.summary?.charsBefore).toBe(5)
     expect(out.summary?.charsAfter).toBe(5)
@@ -58,5 +35,34 @@ describe('write_doc summary', () => {
     expect(out.summary?.versionBefore).toBe(3)
     expect(out.summary?.versionAfter).toBe(3)  // no bump on no-op
   })
-})
 
+  it('refuses to overwrite a doc the agent has not read', async () => {
+    const harness = await makeCtx('precious human text')
+    await expect(
+      handleWriteDoc(harness.ctx, { projectId: 'p', path: 'a.tex', content: 'clobber' }),
+    ).rejects.toMatchObject({ code: 'DOC_NOT_READ' })
+    expect(harness.text()).toBe('precious human text')
+  })
+
+  it('refuses to overwrite when a collaborator edited the doc after the last read', async () => {
+    const harness = await makeCtx('hello')
+    await handleReadDoc(harness.ctx, { projectId: 'p', path: 'a.tex' })
+    harness.server.remoteEdit('a', [{ p: 5, i: ' from the browser' }])
+    await expect(
+      handleWriteDoc(harness.ctx, { projectId: 'p', path: 'a.tex', content: 'hello world' }),
+    ).rejects.toMatchObject({ code: 'DOC_CHANGED_EXTERNALLY' })
+    expect(harness.text()).toBe('hello from the browser')
+  })
+
+  it('overwrite=true bypasses both guards', async () => {
+    const harness = await makeCtx('old')
+    await handleWriteDoc(harness.ctx, { projectId: 'p', path: 'a.tex', content: 'new', overwrite: true })
+    expect(harness.text()).toBe('new')
+  })
+
+  it('writes a new empty doc without requiring a read', async () => {
+    const harness = await makeCtx('')
+    await handleWriteDoc(harness.ctx, { projectId: 'p', path: 'a.tex', content: 'fresh' })
+    expect(harness.text()).toBe('fresh')
+  })
+})

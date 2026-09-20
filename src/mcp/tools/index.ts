@@ -20,6 +20,7 @@ import {
 import { OverleafError } from '../../errors.js'
 import type { DownloadPdfResult } from './compile.js'
 import { effectiveMime } from './mime.js'
+import { formatExternalChanges } from '../changes.js'
 
 // All MCP tool names are prefixed `overleaf_*` so they remain unambiguous in
 // hosts that don't auto-namespace by server name (Cursor, Continue, custom
@@ -44,7 +45,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'overleaf_read_doc',
-    description: 'Read a text document by path within an Overleaf project.',
+    description: 'Read a text document by path within an Overleaf project. The text is live: it reflects collaborators\' keystrokes up to this instant. After you have read a doc, every later tool result for the project carries an <external-changes> block with a diff whenever someone else edits it, so you rarely need to re-read.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -85,20 +86,21 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'overleaf_write_doc',
-    description: 'Replace an Overleaf text doc by path. Edits flow as live OT ops; collaborators see fine-grained changes, not a "file changed externally" toast. Returns a summary {versionBefore, versionAfter, charsBefore, charsAfter, charsDelta, opsApplied}. For surgical edits prefer overleaf_edit_doc.',
+    description: 'Replace the entire contents of an Overleaf text doc. Prefer overleaf_edit_doc for anything short of a rewrite: a whole-doc replace is built from what you last read, so it is refused (DOC_CHANGED_EXTERNALLY) if a collaborator edited the doc since, and (DOC_NOT_READ) if the doc has content you have not read this session. Pass overwrite=true to skip both checks. Only the differing characters are sent, as live OT ops. Returns {versionBefore, versionAfter, charsBefore, charsAfter, charsDelta, opsApplied}.',
     inputSchema: {
       type: 'object',
       properties: {
         projectId: { type: 'string' },
         path: { type: 'string' },
         content: { type: 'string' },
+        overwrite: { type: 'boolean', description: 'Replace the doc even if it is unread or a collaborator changed it since your last read.' },
       },
       required: ['projectId', 'path', 'content'],
     },
   },
   {
     name: 'overleaf_edit_doc',
-    description: 'The recommended editing surface for Overleaf docs. Six edit modes: replace (anchor-based find/replace with unique/first/all/Nth occurrence semantics), insert_before, insert_after, replace_lines, unified_diff (LLMs emit this format fluently), and raw_ops (caller-supplied OT ops). All edits in one call apply atomically — if any one fails to resolve, none apply. Pass dryRun=true to preview the resolved OT ops without applying. The server resolves anchors → OT positions for you and pre-validates ops against the local baseline before emit, so a wrong offset surfaces as OT_DELETE_MISMATCH immediately rather than silently no-opping.',
+    description: 'Edit an Overleaf doc by exact string replacement — the recommended way to change text. Each edit replaces old_string with new_string. old_string must identify exactly one place in the doc (include enough surrounding text to make it unique) unless replace_all is true. Edits apply in order, each to the result of the previous, and atomically: if any edit fails, nothing is changed. Matching is against the live doc, so edits compose with what collaborators are typing elsewhere in the file; if someone changed the text you targeted, the call fails with EDIT_NO_MATCH and shows their change. If old_string is not found verbatim, a match that differs only in whitespace/indentation is accepted when unambiguous. To insert, use an anchor as old_string and repeat it in new_string; to delete, pass an empty new_string. Returns a unified diff of the change. dryRun=true previews without applying. (Legacy v1.1 edits with a "mode" field — replace, insert_before, insert_after, replace_lines, unified_diff, raw_ops — are still accepted.)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -108,83 +110,26 @@ const TOOL_DEFINITIONS = [
           type: 'array',
           minItems: 1,
           items: {
-            oneOf: [
-              {
-                type: 'object',
-                properties: {
-                  mode: { const: 'replace' },
-                  find: { type: 'string' },
-                  replace: { type: 'string' },
-                  occurrence: {
-                    oneOf: [
-                      { type: 'string', enum: ['unique', 'first', 'all'] },
-                      { type: 'integer', minimum: 0 },
-                    ],
-                  },
-                },
-                required: ['mode', 'find', 'replace'],
-              },
-              {
-                type: 'object',
-                properties: {
-                  mode: { const: 'insert_before' },
-                  find: { type: 'string' },
-                  text: { type: 'string' },
-                },
-                required: ['mode', 'find', 'text'],
-              },
-              {
-                type: 'object',
-                properties: {
-                  mode: { const: 'insert_after' },
-                  find: { type: 'string' },
-                  text: { type: 'string' },
-                },
-                required: ['mode', 'find', 'text'],
-              },
-              {
-                type: 'object',
-                properties: {
-                  mode: { const: 'replace_lines' },
-                  startLine: { type: 'integer', minimum: 1 },
-                  endLine: { type: 'integer', minimum: 1 },
-                  text: { type: 'string' },
-                },
-                required: ['mode', 'startLine', 'endLine', 'text'],
-              },
-              {
-                type: 'object',
-                properties: {
-                  mode: { const: 'raw_ops' },
-                  ops: {
-                    type: 'array',
-                    items: {
-                      type: 'object',
-                      properties: {
-                        p: { type: 'integer', minimum: 0 },
-                        i: { type: 'string' },
-                        d: { type: 'string' },
-                      },
-                      required: ['p'],
-                    },
-                  },
-                },
-                required: ['mode', 'ops'],
-              },
-              {
-                type: 'object',
-                properties: {
-                  mode: { const: 'unified_diff' },
-                  diff: { type: 'string' },
-                },
-                required: ['mode', 'diff'],
-              },
-            ],
+            type: 'object',
+            properties: {
+              old_string: { type: 'string', description: 'Text to replace, copied from the doc.' },
+              new_string: { type: 'string', description: 'Replacement text (must differ from old_string).' },
+              replace_all: { type: 'boolean', description: 'Replace every occurrence of old_string (default false).' },
+            },
           },
         },
         dryRun: { type: 'boolean' },
       },
       required: ['projectId', 'path', 'edits'],
+    },
+  },
+  {
+    name: 'overleaf_check_changes',
+    description: 'Report what collaborators changed in an Overleaf project since your last tool call: diffs for docs you have read, plus file-tree changes. The same report is appended automatically to every other tool result, so call this only to poll (e.g. after waiting for a human to finish editing).',
+    inputSchema: {
+      type: 'object',
+      properties: { projectId: { type: 'string' } },
+      required: ['projectId'],
     },
   },
   {
@@ -300,122 +245,164 @@ const TOOL_DEFINITIONS = [
   },
 ] as const
 
-export function registerAllTools(server: Server, ctx: ServerContext) {
+/**
+ * A ready context, or a function that builds one on demand. The CLI passes
+ * the latter so an expired cookie surfaces as a tool error the agent can read
+ * (and that a fresh `login` fixes without restarting) rather than as a server
+ * that dies before the MCP handshake.
+ */
+export type ContextSource = ServerContext | (() => Promise<ServerContext>)
+
+export function registerAllTools(server: Server, source: ContextSource) {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: TOOL_DEFINITIONS.map((t) => ({ ...t })),
   }))
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const { name, arguments: args = {} } = req.params
+    const projectId = typeof args.projectId === 'string' ? args.projectId : undefined
+    let ctx: ServerContext | undefined
     try {
-      switch (name) {
-        case 'overleaf_list_projects':
-          return wrap(await handleListProjects(ctx, args as Record<string, never>))
-        case 'overleaf_get_project_tree':
-          return wrap(await handleGetProjectTree(ctx, args as { projectId: string }))
-        case 'overleaf_read_doc':
-          return wrap(await handleReadDoc(ctx, args as { projectId: string; path: string }))
-        case 'overleaf_read_doc_range':
-          return wrap(
-            await handleReadDocRange(
-              ctx,
-              args as { projectId: string; path: string; startLine?: number; endLine?: number; startOffset?: number; length?: number },
-            ),
-          )
-        case 'overleaf_read_file': {
-          const args2 = args as { projectId: string; path: string; as?: 'auto' | 'base64' }
-          const result = await handleReadFile(ctx, args2)
-          return formatBinaryFile(result, args2.projectId, args2.path, args2.as ?? 'auto')
-        }
-        case 'overleaf_write_doc':
-          return wrap(
-            await handleWriteDoc(
-              ctx,
-              args as { projectId: string; path: string; content: string },
-            ),
-          )
-        case 'overleaf_edit_doc':
-          return wrap(
-            await handleEditDoc(
-              ctx,
-              args as unknown as Parameters<typeof handleEditDoc>[1],
-            ),
-          )
-        case 'overleaf_compile':
-          return wrap(
-            await handleCompile(
-              ctx,
-              args as { projectId: string; draft?: boolean; stopOnFirstError?: boolean },
-            ),
-          )
-        case 'overleaf_read_compile_log':
-          return wrap(await handleReadCompileLog(ctx, args as { projectId: string }))
-        case 'overleaf_download_pdf': {
-          const args2 = args as { projectId: string }
-          const result = await handleDownloadPdf(ctx, args2)
-          return formatPdf(result, args2.projectId)
-        }
-        case 'overleaf_create_doc':
-          return wrap(
-            await handleCreateDoc(
-              ctx,
-              args as { projectId: string; parentPath: string; name: string; content?: string },
-            ),
-          )
-        case 'overleaf_create_folder':
-          return wrap(
-            await handleCreateFolder(
-              ctx,
-              args as { projectId: string; parentPath: string; name: string },
-            ),
-          )
-        case 'overleaf_upload_file':
-          return wrap(
-            await handleUploadFile(
-              ctx,
-              args as {
-                projectId: string
-                parentPath: string
-                name: string
-                contentBase64: string
-                mimeType?: string
-              },
-            ),
-          )
-        case 'overleaf_rename':
-          return wrap(
-            await handleRename(
-              ctx,
-              args as { projectId: string; path: string; newName: string },
-            ),
-          )
-        case 'overleaf_move':
-          return wrap(
-            await handleMove(
-              ctx,
-              args as { projectId: string; path: string; newParentPath: string },
-            ),
-          )
-        case 'overleaf_delete_entity':
-          return wrap(
-            await handleDeleteEntity(
-              ctx,
-              args as { projectId: string; path: string },
-            ),
-          )
-        default:
-          throw new OverleafError('NOT_FOUND', `Unknown tool: ${name}`)
-      }
+      ctx = typeof source === 'function' ? await source() : source
+      return withExternalChanges(ctx, projectId, await dispatch(ctx, name, args))
     } catch (err) {
       if (err instanceof OverleafError) {
-        return {
+        return withExternalChanges(ctx, projectId, {
           content: [{ type: 'text', text: JSON.stringify(err.toEnvelope(), null, 2) }],
           isError: true,
-        }
+        })
       }
       throw err
     }
   })
+
+  async function dispatch(ctx: ServerContext, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+    switch (name) {
+      case 'overleaf_list_projects':
+        return wrap(await handleListProjects(ctx, args as Record<string, never>))
+      case 'overleaf_get_project_tree':
+        return wrap(await handleGetProjectTree(ctx, args as { projectId: string }))
+      case 'overleaf_read_doc':
+        return wrap(await handleReadDoc(ctx, args as { projectId: string; path: string }))
+      case 'overleaf_read_doc_range':
+        return wrap(
+          await handleReadDocRange(
+            ctx,
+            args as { projectId: string; path: string; startLine?: number; endLine?: number; startOffset?: number; length?: number },
+          ),
+        )
+      case 'overleaf_read_file': {
+        const args2 = args as { projectId: string; path: string; as?: 'auto' | 'base64' }
+        const result = await handleReadFile(ctx, args2)
+        return formatBinaryFile(result, args2.projectId, args2.path, args2.as ?? 'auto')
+      }
+      case 'overleaf_write_doc':
+        return wrap(
+          await handleWriteDoc(
+            ctx,
+            args as { projectId: string; path: string; content: string; overwrite?: boolean },
+          ),
+        )
+      case 'overleaf_edit_doc':
+        return wrap(
+          await handleEditDoc(
+            ctx,
+            args as unknown as Parameters<typeof handleEditDoc>[1],
+          ),
+        )
+      case 'overleaf_check_changes':
+        // Connect so tracking starts; the report itself is appended by the caller.
+        await ctx.ot.get((args as { projectId: string }).projectId)
+        return wrap({ ok: true })
+      case 'overleaf_compile':
+        return wrap(
+          await handleCompile(
+            ctx,
+            args as { projectId: string; draft?: boolean; stopOnFirstError?: boolean },
+          ),
+        )
+      case 'overleaf_read_compile_log':
+        return wrap(await handleReadCompileLog(ctx, args as { projectId: string }))
+      case 'overleaf_download_pdf': {
+        const args2 = args as { projectId: string }
+        const result = await handleDownloadPdf(ctx, args2)
+        return formatPdf(result, args2.projectId)
+      }
+      case 'overleaf_create_doc':
+        return wrap(
+          await handleCreateDoc(
+            ctx,
+            args as { projectId: string; parentPath: string; name: string; content?: string },
+          ),
+        )
+      case 'overleaf_create_folder':
+        return wrap(
+          await handleCreateFolder(
+            ctx,
+            args as { projectId: string; parentPath: string; name: string },
+          ),
+        )
+      case 'overleaf_upload_file':
+        return wrap(
+          await handleUploadFile(
+            ctx,
+            args as {
+              projectId: string
+              parentPath: string
+              name: string
+              contentBase64: string
+              mimeType?: string
+            },
+          ),
+        )
+      case 'overleaf_rename':
+        return wrap(
+          await handleRename(
+            ctx,
+            args as { projectId: string; path: string; newName: string },
+          ),
+        )
+      case 'overleaf_move':
+        return wrap(
+          await handleMove(
+            ctx,
+            args as { projectId: string; path: string; newParentPath: string },
+          ),
+        )
+      case 'overleaf_delete_entity':
+        return wrap(
+          await handleDeleteEntity(
+            ctx,
+            args as { projectId: string; path: string },
+          ),
+        )
+      default:
+        throw new OverleafError('NOT_FOUND', `Unknown tool: ${name}`)
+    }
+  }
+}
+
+interface ToolResult {
+  // Index signature keeps this assignable to the SDK's open-ended result type.
+  [key: string]: unknown
+  content: Array<unknown>
+  isError?: boolean
+}
+
+/**
+ * Append what collaborators changed since the agent's previous call. Runs
+ * for failures too: a missed old_string is usually explained by the diff.
+ */
+function withExternalChanges(
+  ctx: ServerContext | undefined,
+  projectId: string | undefined,
+  result: ToolResult,
+): ToolResult {
+  const engine = projectId ? ctx?.ot.peek?.(projectId) : undefined
+  if (!engine) return result
+  const block = formatExternalChanges(engine.collectExternalChanges())
+  if (!block) return result
+  return { ...result, content: [...result.content, { type: 'text', text: block }] }
 }
 
 function wrap(payload: unknown) {

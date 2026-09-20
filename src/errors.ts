@@ -8,6 +8,10 @@ export type ErrorCode =
   | 'NOT_FOUND'
   | 'OT_DELETE_MISMATCH'
   | 'OT_VERSION_DRIFT'
+  | 'EDIT_NO_MATCH'
+  | 'EDIT_AMBIGUOUS'
+  | 'DOC_CHANGED_EXTERNALLY'
+  | 'DOC_NOT_READ'
 
 export interface ErrorEnvelope {
   code: ErrorCode
@@ -93,6 +97,30 @@ export class OtVersionDriftError extends OverleafError {
   }
 }
 
+export class EditNoMatchError extends OverleafError {
+  constructor(message: string, context: Record<string, unknown> = {}) {
+    super('EDIT_NO_MATCH', message, context)
+  }
+}
+
+export class EditAmbiguousError extends OverleafError {
+  constructor(message: string, context: Record<string, unknown> = {}) {
+    super('EDIT_AMBIGUOUS', message, context)
+  }
+}
+
+export class DocChangedExternallyError extends OverleafError {
+  constructor(message: string, context: Record<string, unknown> = {}) {
+    super('DOC_CHANGED_EXTERNALLY', message, context)
+  }
+}
+
+export class DocNotReadError extends OverleafError {
+  constructor(message: string, context: Record<string, unknown> = {}) {
+    super('DOC_NOT_READ', message, context)
+  }
+}
+
 const RETRYABLE_CODES: ReadonlySet<ErrorCode> = new Set([
   'NETWORK_ERROR',
   'OT_VERSION_DRIFT',
@@ -107,6 +135,14 @@ const HINTS: Partial<Record<ErrorCode, string>> = {
     'The d-string did not match the doc at position p. Re-read the doc to get the current text, then recompute offsets.',
   OT_VERSION_DRIFT:
     'The doc was modified concurrently. Re-read the doc and retry the edit.',
+  EDIT_NO_MATCH:
+    'old_string must match the current doc text. If collaborators edited the doc, the external-changes block in this response shows what moved; otherwise re-read the region with overleaf_read_doc_range and copy the text exactly.',
+  EDIT_AMBIGUOUS:
+    'Include more surrounding text in old_string so it identifies one location, or set replace_all to change every occurrence.',
+  DOC_CHANGED_EXTERNALLY:
+    'A collaborator edited this doc after you last read it; the external-changes block in this response shows their edits. Nothing was written. Use overleaf_edit_doc (it targets text, so it composes with their edits) or merge their changes into your content and retry.',
+  DOC_NOT_READ:
+    'Read the doc first (overleaf_read_doc) so you do not overwrite text you have not seen, or use overleaf_edit_doc for a targeted change. Pass overwrite=true to replace it regardless.',
   OVERLEAF_AUTH_FAILED:
     'The session cookie is invalid or expired. Run `overleaf-mcp-rt login` to refresh.',
   PROXY_AUTH_FAILED:

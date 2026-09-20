@@ -2,7 +2,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { OverleafHttp } from '../overleaf/http.js'
 import { OverleafRest } from '../overleaf/rest.js'
-import { registerAllTools } from './tools/index.js'
+import { registerAllTools, type ContextSource } from './tools/index.js'
 import { OverleafSocket } from '../overleaf/socket.js'
 import { OtEngineRegistry, type OtEngineFactory } from '../overleaf/ot.js'
 
@@ -44,7 +44,7 @@ export function buildContext(opts: ContextOptions): ServerContext {
   return { http, rest, ot }
 }
 
-export async function runMcpServer(ctx: ServerContext) {
+export async function runMcpServer(ctx: ContextSource) {
   const server = new Server(
     { name: 'overleaf-mcp-rt', version: '1.0.0' },
     { capabilities: { tools: {} } },

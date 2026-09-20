@@ -26,7 +26,16 @@ export interface ProjectEntity {
   rootDoc_id: string
   rootFolder: FolderEntity[]
   features?: Record<string, unknown>
-  // Other fields (compiler, owner, etc.) ignored for v0.2.
+  /** Used to attribute collaborators' edits by name. */
+  owner?: ProjectUser
+  members?: ProjectUser[]
+}
+
+export interface ProjectUser {
+  _id: string
+  first_name?: string
+  last_name?: string
+  email?: string
 }
 
 /** A folder in the project tree. */
@@ -61,7 +70,7 @@ export interface UpdateSchema {
   doc: string
   /** Ops, omitted on no-op acks. */
   op?: OtOp[]
-  /** Doc version this update brings the doc TO. */
+  /** Doc version the op was applied AT; the doc is at v + 1 afterwards. */
   v: number
   /** Optional: last known version (some Overleaf versions require it). */
   lastV?: number

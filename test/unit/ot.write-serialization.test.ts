@@ -56,21 +56,17 @@ describe('OtEngine concurrent writes are serialized per docId', () => {
 
     sock.respondToEmit('joinDoc', (docId) => [null, [docId === 'd1' ? 'a' : 'b'], 0, []])
 
-    let inflight = 0
-    let maxInflight = 0
-    sock.respondToEmit('applyOtUpdate', () => {
-      inflight += 1
-      maxInflight = Math.max(maxInflight, inflight)
-      // Defer ack to the next microtask so a SECOND emit can land before the first acks.
-      queueMicrotask(() => { inflight -= 1 })
-      return [null]
-    })
-
+    // Hold back the server's confirmations so we can observe both ops in flight at once.
+    sock.autoConfirmWrites = false
     const p1 = engine.writeDoc('d1', 'aX')
     const p2 = engine.writeDoc('d2', 'bY')
-    await Promise.all([p1, p2])
+    await new Promise((r) => setTimeout(r, 10))
 
     // Per-doc serialization must NOT block cross-doc concurrency.
-    expect(maxInflight).toBeGreaterThanOrEqual(2)
+    expect(sock.emitsOf('applyOtUpdate').map((e) => e.args[0])).toEqual(['d1', 'd2'])
+
+    sock.simulate('otUpdateApplied', { doc: 'd1', v: 0 })
+    sock.simulate('otUpdateApplied', { doc: 'd2', v: 0 })
+    await Promise.all([p1, p2])
   })
 })

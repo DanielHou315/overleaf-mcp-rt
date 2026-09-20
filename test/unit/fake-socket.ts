@@ -23,6 +23,12 @@ export class FakeSocket implements SocketLike {
   /** Registered listeners. */
   private handlers = new Map<string, Set<(...args: unknown[]) => void>>()
   disconnected = false
+  /**
+   * Mirror the real server: a successfully queued applyOtUpdate is confirmed
+   * to its sender by a later `otUpdateApplied {doc, v}` with no `op`. Set to
+   * false to drive the confirmation (or an otUpdateError) by hand.
+   */
+  autoConfirmWrites = true
 
   emit(event: string, ...args: unknown[]): void {
     this.emits.push({ event, args, hadAck: false })
@@ -33,6 +39,7 @@ export class FakeSocket implements SocketLike {
     const responder = this.ackResponders.get(event) ?? this.defaultAck
     if (!responder) {
       // Default: succeed with no data. Tests should usually register a responder.
+      this.confirmWrite(event, args)
       return Promise.resolve([])
     }
     const result = responder === this.defaultAck
@@ -40,7 +47,14 @@ export class FakeSocket implements SocketLike {
       : responder(...args)
     const [err, ...data] = result
     if (err) return Promise.reject(err)
+    this.confirmWrite(event, args)
     return Promise.resolve(data)
+  }
+
+  private confirmWrite(event: string, args: unknown[]): void {
+    if (event !== 'applyOtUpdate' || !this.autoConfirmWrites) return
+    const update = args[1] as { doc: string; v: number }
+    queueMicrotask(() => this.simulate('otUpdateApplied', { doc: update.doc, v: update.v }))
   }
 
   on(event: string, handler: (...args: unknown[]) => void): void {
