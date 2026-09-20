@@ -9,13 +9,7 @@ import { handleAddComment } from '../../src/mcp/tools/comments.js'
 import { handleEditDoc } from '../../src/mcp/tools/edit.js'
 import { FakeOverleaf, connectEngine, makeToolHarness } from './fake-overleaf.js'
 import { TextOp } from './text-operation-oracle.js'
-
-function lcg(seed: number) {
-  return (n: number) => {
-    seed = (seed * 1103515245 + 12345) & 0x7fffffff
-    return seed % n
-  }
-}
+import { prng as lcg } from './prng.js'
 
 /** A random multi-component edit of `text`, as the ShareJS components computeOps would produce. */
 function randomEdit(text: string, rand: (n: number) => number, tag: string): OtOp[] {
@@ -177,6 +171,96 @@ describe('OtEngine on a history-ot doc', () => {
     }
     expect(errors).toEqual([])
     expect(server.sock.emitsOf('joinDoc')).toHaveLength(1)
+  })
+
+  // The live matrix found this: document-updater transforms a stale history-ot op but leaves
+  // its `v` at what the sender submitted, for the broadcast and for the ack alike.
+  it('follows an op that was applied later than its version says, while our own op is in flight', async () => {
+    const server = new FakeOverleaf({ d1: 'one two three' }, historyOt)
+    const engine = await connectEngine(server)
+    const errors: unknown[] = []
+    server.sock.on('otUpdateError', (e) => errors.push(e))
+    await engine.openDoc('d1')
+
+    // Agent's op reaches the server first…
+    const humanBasedOn = server.version('d1')
+    await engine.updateDoc('d1', (t) => t.replace('one', 'ONE'))
+    // …then the op a person typed before seeing it: applied after ours, but stamped with their old version.
+    server.remoteSplice('d1', 13, 0, '!', { basedOn: humanBasedOn })
+    expect(server.text('d1')).toBe('ONE two three!')
+    expect(engine.readDoc('d1')).toBe('ONE two three!')
+
+    // And the other way round: theirs lands while ours is held, so our *ack* carries a stale version.
+    server.holdAgentOps = true
+    const write = engine.updateDoc('d1', (t) => t.replace('two', 'TWO'))
+    for (let i = 0; i < 50 && server.heldCount === 0; i++) await new Promise((r) => setTimeout(r, 0))
+    server.remoteSplice('d1', 0, 0, '>> ')
+    server.flush()
+    await write
+    expect(server.text('d1')).toBe('>> ONE TWO three!')
+    expect(engine.readDoc('d1')).toBe(server.text('d1'))
+
+    expect(errors).toEqual([])
+    expect(server.sock.emitsOf('joinDoc'), 'followed live, never had to rejoin').toHaveLength(1)
+    const reported = engine.collectExternalChanges().docs
+    expect(reported).toHaveLength(1)
+    expect(reported[0]!.after).toContain('>> ')
+  })
+
+  for (const restampVersions of [false, true]) {
+    it(`stays identical through random interleavings with stale collaborator ops (server ${restampVersions ? 'restamps' : 'does not restamp'} versions)`, async () => {
+      const rand = lcg(restampVersions ? 99 : 1234)
+      const server = new FakeOverleaf({ d1: 'lorem ipsum dolor sit amet, consectetur adipiscing elit' }, { historyOt: true, restampVersions })
+      const engine = await connectEngine(server)
+      const errors: unknown[] = []
+      server.sock.on('otUpdateError', (e) => errors.push(e))
+      await engine.joinDoc('d1')
+      const first = server.version('d1')
+      let staleOps = 0
+
+      for (let round = 0; round < 150; round++) {
+        server.holdAgentOps = rand(2) === 0
+        const write = engine.updateDoc('d1', (t) => {
+          const p = rand(t.length + 1)
+          return `${t.slice(0, p)}[a${round}]${t.slice(Math.min(t.length, p + rand(3)))}`
+        })
+        if (server.holdAgentOps) {
+          for (let i = 0; i < 50 && server.heldCount === 0; i++) await new Promise((r) => setTimeout(r, 0))
+        }
+        for (let k = rand(4); k > 0; k--) {
+          // A person's editor can be a few versions behind when they type.
+          const current = server.version('d1')
+          const basedOn = Math.max(first, current - rand(3))
+          if (basedOn < current) staleOps += 1
+          server.remoteSplice('d1', rand(60), rand(3), rand(2) === 0 ? `h${rand(10)}` : '', { basedOn })
+        }
+        server.flush()
+        await write
+        expect(engine.readDoc('d1'), `round ${round}`).toBe(server.text('d1'))
+      }
+      expect(staleOps, 'the scenario must actually contain stale ops').toBeGreaterThan(50)
+      expect(errors).toEqual([])
+      expect(server.sock.emitsOf('joinDoc')).toHaveLength(1)
+    })
+  }
+
+  it('joins again when an update crossing the join cannot be placed, instead of guessing', async () => {
+    const server = new FakeOverleaf({ d1: 'abc' }, historyOt)
+    const engine = await connectEngine(server)
+    let joins = 0
+    server.sock.respondToEmit('joinDoc', () => {
+      joins += 1
+      if (joins === 1) {
+        // A keystroke lands between the room join and the snapshot: it is in the snapshot below
+        // (version 2) but its broadcast, stamped with the older version, also reaches us.
+        server.remoteSplice('d1', 3, 0, 'd')
+      }
+      return [null, { content: server.text('d1') }, server.version('d1'), [], {}, 'history-ot']
+    })
+    const baseline = await engine.joinDoc('d1')
+    expect(joins).toBe(2)
+    expect(baseline.text).toBe('abcd')
+    expect(baseline.version).toBe(server.version('d1'))
   })
 
   it('never sends a surrogate: the server would reject the whole update and disconnect everyone', async () => {

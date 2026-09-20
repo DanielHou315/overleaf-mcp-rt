@@ -380,22 +380,37 @@ export class OtEngine {
     const buffer: UpdateSchema[] = []
     const promise: Promise<DocBaseline> = this.joinQueue
       .catch(() => undefined)
-      .then(() => {
-        if (socket !== this.currentSocket) {
-          throw new NetworkError('Connection was reset while joining the doc')
+      .then(async () => {
+        for (let attempt = 1; ; attempt++) {
+          if (socket !== this.currentSocket) {
+            throw new NetworkError('Connection was reset while joining the doc')
+          }
+          // real-time subscribes us to the doc room *before* it fetches the
+          // snapshot, so updates can overtake the joinDoc response. Buffer them
+          // and replay whatever the snapshot doesn't already include.
+          buffer.length = 0
+          this.joinBuffers.set(docId, buffer)
+          // A dead socket never acks; without a deadline one lost join would
+          // wedge every later join behind it in the queue.
+          const data = await withTimeout(
+            // supportsHistoryOT: without it real-time refuses docs of migrated projects. Older servers ignore it.
+            socket.emitWithAck('joinDoc', docId, { encodeRanges: true, supportsHistoryOT: true }),
+            this.joinTimeoutMs,
+            () => new NetworkError(`Timed out after ${this.joinTimeoutMs}ms joining doc ${docId}`),
+          )
+          // For history-ot a buffered update's `v` may be the version its sender *submitted* at
+          // (see handleRemoteUpdate), so one below the snapshot's version is either already in the
+          // snapshot or a late-applied op we need — it can't be told which. Join again; this only
+          // happens when someone's keystroke crosses our join.
+          const version = (data as unknown[])[1] as number
+          const ambiguous = isRawStringFileData((data as unknown[])[0]) && buffer.some((u) => u.op && u.v < version)
+          if (!ambiguous) return data
+          if (attempt >= JOIN_ATTEMPTS) {
+            throw new NetworkError(
+              `Could not get a consistent snapshot of doc ${docId}: collaborators' edits kept crossing the join. Try again.`,
+            )
+          }
         }
-        // real-time subscribes us to the doc room *before* it fetches the
-        // snapshot, so updates can overtake the joinDoc response. Buffer them
-        // and replay whatever the snapshot doesn't already include.
-        this.joinBuffers.set(docId, buffer)
-        // A dead socket never acks; without a deadline one lost join would
-        // wedge every later join behind it in the queue.
-        return withTimeout(
-          // supportsHistoryOT: without it real-time refuses docs of migrated projects. Older servers ignore it.
-          socket.emitWithAck('joinDoc', docId, { encodeRanges: true, supportsHistoryOT: true }),
-          this.joinTimeoutMs,
-          () => new NetworkError(`Timed out after ${this.joinTimeoutMs}ms joining doc ${docId}`),
-        )
       })
       .then((data) => {
         if (socket !== this.currentSocket) {
@@ -659,7 +674,7 @@ export class OtEngine {
     clearTimeout(inflight.timer)
     this.inflightWrites.delete(docId)
     const baseline = this.baselines.get(docId)
-    if (baseline && update.v === baseline.version) {
+    if (baseline && inSequence(baseline, update.v)) {
       try {
         // Everything collaborators did up to this point is external to the
         // agent's edit; capture it before our own op is folded in.
@@ -667,7 +682,7 @@ export class OtEngine {
         // inflight.ops has been transformed past every op that beat ours to
         // the server, exactly as the server transformed it.
         applyToBaseline(baseline, inflight.ops)
-        baseline.version = update.v + 1
+        baseline.version += 1
       } catch {
         this.baselines.delete(docId)
       }
@@ -683,8 +698,9 @@ export class OtEngine {
     const docId = update.doc
     const baseline = this.baselines.get(docId)
     if (!baseline || !update.op) return
-    if (update.v < baseline.version) return // already part of our snapshot
-    if (update.v > baseline.version) {
+    // ShareJS docs: `v` is the version the op was applied at, so a lower one is already in our snapshot.
+    if (baseline.otType === 'sharejs-text-ot' && update.v < baseline.version) return
+    if (!inSequence(baseline, update.v)) {
       // Gap: we missed an update, so the text can't be reconstructed.
       this.dropBaseline(docId)
       return
@@ -694,7 +710,7 @@ export class OtEngine {
         ? decodeEditOperations(update.op as unknown[], baseline.text)
         : update.op
       applyToBaseline(baseline, remoteOps)
-      baseline.version = update.v + 1
+      baseline.version += 1
       const inflight = this.inflightWrites.get(docId)
       if (inflight) inflight.ops = transformOps(inflight.ops, remoteOps, 'left')
     } catch {
@@ -1103,6 +1119,30 @@ function applyToBaseline(baseline: DocBaseline, ops: OtOp[]): void {
       }
     }
   }
+}
+
+/** How often joinDoc is retried when collaborators' history-ot updates cross it ambiguously. */
+const JOIN_ATTEMPTS = 3
+
+/**
+ * Is an update carrying version `v` the next one for this snapshot?
+ *
+ * For ShareJS docs the server stamps every update with the version it was
+ * applied at (sharejs model.js: `opData.v++` per transformed op), so it must
+ * equal ours exactly.
+ *
+ * For history-ot docs document-updater (HistoryOTUpdateManager, 6.0 – 6.3)
+ * transforms a stale op but never restamps it: broadcasts and acks carry the
+ * version the *sender submitted at*, which can be lower than the version the op
+ * was applied at. It can never be higher. What is reliable is order: updates of
+ * one doc reach a client in the order they were applied. So there we sequence by
+ * arrival, accept any `v` up to our version, and count versions ourselves. A
+ * text operation's length must match the doc (history-ot.ts), which turns a
+ * missed update into a rejoin instead of a silent divergence. Found with the
+ * live matrix; a server that does restamp satisfies the same rule.
+ */
+function inSequence(baseline: DocBaseline, v: number): boolean {
+  return baseline.otType === 'history-ot' ? v <= baseline.version : v === baseline.version
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => Error): Promise<T> {

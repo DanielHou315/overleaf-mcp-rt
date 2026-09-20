@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { prng } from './prng.js'
 import { OtEngine } from '../../src/overleaf/ot.js'
 import { FakeOverleaf, connectEngine } from './fake-overleaf.js'
 
@@ -60,11 +61,7 @@ describe('OtEngine live sync with a collaborator', () => {
   })
 
   it('survives a randomized interleaving of human and agent edits without diverging', async () => {
-    let seed = 42
-    const rand = (n: number) => {
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff
-      return seed % n
-    }
+    const rand = prng(42)
     const server = new FakeOverleaf({ d1: 'lorem ipsum dolor sit amet, consectetur adipiscing elit' })
     const engine = await connectEngine(server)
     const errors: unknown[] = []
@@ -81,6 +78,8 @@ describe('OtEngine live sync with a collaborator', () => {
       }
     }
 
+    let humanEdits = 0
+    let raced = 0
     for (let round = 0; round < 150; round++) {
       server.holdAgentOps = rand(2) === 0
       const write = engine.updateDoc('d1', (t) => {
@@ -90,11 +89,18 @@ describe('OtEngine live sync with a collaborator', () => {
           : `${t.slice(0, p)}[a${round}]${t.slice(p)}`
       })
       if (server.holdAgentOps) await opInFlight(server)
-      for (let k = rand(4); k > 0; k--) humanEdit()
+      for (let k = rand(4); k > 0; k--) {
+        humanEdit()
+        humanEdits += 1
+        if (server.holdAgentOps) raced += 1
+      }
       server.flush()
       await write
       expect(engine.readDoc('d1')).toBe(server.text('d1'))
     }
+    // The scenario has to contain what it claims to test (a weak PRNG once made it all but empty).
+    expect(humanEdits).toBeGreaterThan(150)
+    expect(raced, 'human edits that landed while an agent op was in flight').toBeGreaterThan(50)
     expect(errors).toEqual([])
     expect(server.sock.emitsOf('joinDoc')).toHaveLength(1)
   })
