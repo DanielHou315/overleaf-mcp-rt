@@ -20,6 +20,7 @@ npx overleaf-mcp-rt@latest --help
 - [Why "real-time"? Native OT vs git-bridge](#why-real-time-native-ot-vs-git-bridge)
 - [Install](#install)
 - [Quick start](#quick-start)
+- [Multiple hosts](#multiple-hosts)
 - [MCP client config](#mcp-client-config)
 - [Sanity-check: `diagnose`](#sanity-check-diagnose)
 - [Tools](#tools)
@@ -76,6 +77,23 @@ npx overleaf-mcp-rt diagnose
 npx overleaf-mcp-rt ls
 ```
 
+## Multiple hosts
+
+One server can be logged in to several Overleaf instances at once — say a self-hosted CE box and overleaf.com. Run `login` once per instance:
+
+```bash
+npx overleaf-mcp-rt login --url https://tex.example.org                      # first host becomes the default
+npx overleaf-mcp-rt login --url https://www.overleaf.com --name overleaf.com # add another (--default to switch the default)
+npx overleaf-mcp-rt hosts                                                    # names + URLs, never secrets
+npx overleaf-mcp-rt diagnose --host overleaf.com
+```
+
+- A host's name defaults to its hostname without `www.`; `--name` overrides it. Logging in again under the same name just refreshes that host's cookie.
+- Every MCP tool takes an optional **`host`** argument, and `overleaf_list_hosts` tells the agent what exists. Selection is per call rather than a "current host" switch, so parallel tool calls can't race each other onto the wrong instance. Omit `host` to use the default. Project ids only mean something on the host they came from.
+- Each host has its own session, OT connections and external-change tracking. Hosts are authenticated on first use, and the credentials file is re-read on every call, so you can add or refresh a host while the MCP server is running.
+- Credentials live in `~/.config/overleaf-mcp-rt/credentials.json` (mode 0600) as `{ "default": "<name>", "hosts": { "<name>": { url, session_cookie, extra_headers } } }`. The single-host file written by earlier versions is still read and is upgraded in place by the next `login`. `OVERLEAF_URL` / `OVERLEAF_SESSION_COOKIE` / `OVERLEAF_EXTRA_HEADERS` still work: they define (or override) the host for that URL and make it the default.
+- **Pasting a cookie:** `login` accepts either the bare value or `name=value`, and works out whether the instance wants `overleaf_session2` (overleaf.com), `overleaf.sid` (CE ≥ 5) or `sharelatex.sid` (older CE). overleaf.com's password form is CAPTCHA-protected, so cookie paste is the only way in there: in your browser's devtools open Application → Cookies → `https://www.overleaf.com` and copy `overleaf_session2`.
+
 ## MCP client config
 
 Works in Claude Code, Claude Desktop, Cursor, Codex (via MCP), Continue, and any MCP-compliant client.
@@ -118,12 +136,13 @@ A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `P
 
 ## Tools
 
-17 MCP tools, all prefixed `overleaf_*` so they remain unambiguous in hosts that don't auto-namespace by server name. Every tool's error responses use the [structured error envelope](#error-envelope).
+18 MCP tools, all prefixed `overleaf_*` so they remain unambiguous in hosts that don't auto-namespace by server name. Every tool's error responses use the [structured error envelope](#error-envelope).
 
 ### Discovery & read
 
 | Tool | Purpose |
 |---|---|
+| `overleaf_list_hosts` | The Overleaf instances this server is logged in to, and which is the default. Every other tool accepts an optional `host` — see [Multiple hosts](#multiple-hosts). |
 | `overleaf_list_projects` | List accessible projects. |
 | `overleaf_get_project_tree(projectId)` | Folder + file tree (live, OT-backed). |
 | `overleaf_read_doc(projectId, path)` | Full text doc content. Live: reflects collaborators' keystrokes up to the instant of the call. |

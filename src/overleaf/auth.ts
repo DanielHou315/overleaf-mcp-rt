@@ -168,7 +168,9 @@ export async function fetchStickyCookies(input: AuthInput): Promise<string> {
   } catch {
     return '' // best effort: a single-node instance doesn't need it
   }
-  await res.body?.cancel().catch(() => undefined)
+  // Drain the (small) script so the connection is released; cancelling the
+  // stream instead can hang.
+  await res.arrayBuffer().catch(() => undefined)
   const have = new Set((input.sessionCookie ?? '').split(';').map((c) => c.split('=')[0]!.trim()))
   return res.headers
     .getSetCookie()
