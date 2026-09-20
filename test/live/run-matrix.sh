@@ -134,7 +134,7 @@ for row in "${rows[@]}"; do
   # Ready when /login answers; failed the moment the container stops (a version
   # that rejects our configuration exits within seconds — don't wait minutes for it).
   wait_for_overleaf() {
-    local deadline=$((SECONDS + 600)) state code
+    local started=$SECONDS deadline=$((SECONDS + 600)) state code
     while (( SECONDS < deadline )); do
       state="$(docker inspect --format '{{.State.Status}}' "$(dc ps -aq sharelatex)" 2>/dev/null || echo missing)"
       if [[ "$state" != "running" ]]; then
@@ -143,7 +143,7 @@ for row in "${rows[@]}"; do
       fi
       code="$(dc exec -T sharelatex curl -s -o /dev/null -w '%{http_code}' http://localhost/login 2>/dev/null || true)"
       if [[ "$code" == "200" || "$code" == "302" ]]; then
-        echo "  Overleaf is up (after ${SECONDS}s)"
+        echo "  Overleaf is up (after $((SECONDS - started))s)"
         return 0
       fi
       interruptible sleep 5
