@@ -1,6 +1,6 @@
 import { parse as parseHtml } from 'node-html-parser'
 import { OverleafHttp } from './http.js'
-import { CommentsUnsupportedError, OverleafError } from '../errors.js'
+import { CommentsUnsupportedError, NetworkError, OverleafError } from '../errors.js'
 
 export interface ProjectSummary {
   id: string
@@ -20,8 +20,13 @@ export interface CompileResponse {
   status: string
   outputFiles: CompileOutputFile[]
   compileGroup?: string
+  /** Which compile server holds this build's output (hosted / load-balanced instances). */
+  clsiServerId?: string
   pdfDownloadDomain?: string
 }
+
+/** Where a compile's output files are, as told by the compile response. */
+export type OutputLocation = Pick<CompileResponse, 'pdfDownloadDomain' | 'compileGroup' | 'clsiServerId'>
 
 export interface DownloadedBytes {
   bytes: Buffer
@@ -100,18 +105,36 @@ export class OverleafRest {
     return (await res.json()) as CompileResponse
   }
 
-  async downloadOutputFile(
-    buildUrl: string,
-    pdfDownloadDomain?: string,
-  ): Promise<DownloadedBytes> {
-    const url = pdfDownloadDomain && buildUrl.startsWith('/')
-      ? pdfDownloadDomain.replace(/\/+$/, '') + buildUrl
+  /**
+   * Fetch one output file of a compile, the way the editor does (buildFileUrl):
+   * on instances with several compile servers the build only exists on the one
+   * that ran it, and `clsiserverid` / `compileGroup` route the request there —
+   * without them overleaf.com answers 404.
+   *
+   * Hosted instances serve output from a separate user-content domain. The
+   * session cookie and proxy headers belong to the Overleaf origin and are not
+   * sent anywhere else; the unguessable build URL is the credential there.
+   */
+  async downloadOutputFile(buildUrl: string, where: OutputLocation = {}): Promise<DownloadedBytes> {
+    const base = where.pdfDownloadDomain && buildUrl.startsWith('/')
+      ? where.pdfDownloadDomain.replace(/\/+$/, '') + buildUrl
       : buildUrl
-    const res = await this.http.get(url)
+    const target = new URL(base, this.http.url + '/')
+    if (where.compileGroup) target.searchParams.set('compileGroup', where.compileGroup)
+    if (where.clsiServerId) target.searchParams.set('clsiserverid', where.clsiServerId)
+    const url = target.toString()
+    const sameOrigin = target.origin === new URL(this.http.url).origin
+    let res: Response
+    try {
+      res = sameOrigin ? await this.http.get(url) : await fetch(url)
+    } catch (err) {
+      if (err instanceof OverleafError) throw err
+      throw new NetworkError(`fetch failed for GET ${target.origin}${target.pathname}`, err)
+    }
     if (!res.ok) {
       throw new OverleafError(
         'OVERLEAF_GENERIC',
-        `output file ${url} returned ${res.status}`,
+        `output file ${target.origin}${target.pathname} returned ${res.status}`,
       )
     }
     const bytes = Buffer.from(await res.arrayBuffer())

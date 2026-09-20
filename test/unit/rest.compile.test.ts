@@ -143,7 +143,7 @@ describe('OverleafRest.downloadOutputFile (with pdfDownloadDomain)', () => {
     expect(compileRes.pdfDownloadDomain).toBe('https://cdn.o.example')
 
     const url = compileRes.outputFiles.find((f) => f.path === 'output.pdf')!.url
-    const { bytes, contentType } = await rest.downloadOutputFile(url, compileRes.pdfDownloadDomain)
+    const { bytes, contentType } = await rest.downloadOutputFile(url, compileRes)
     expect(bytes.toString('utf-8').startsWith('%PDF')).toBe(true)
     expect(contentType).toBe('application/pdf')
   })
@@ -157,5 +157,41 @@ describe('OverleafRest.downloadOutputFile (with pdfDownloadDomain)', () => {
     )
     const { bytes } = await rest.downloadOutputFile('/project/p7/build/b/output/output.pdf')
     expect(bytes[0]).toBe(0x25)
+  })
+
+  // Found by the live suite on overleaf.com: without these the download 404s,
+  // because the build only exists on the compile server that ran it.
+  it('routes the download to the compile server that holds the build', async () => {
+    let seen: URL | undefined
+    server.use(
+      http.get('https://cdn.o.example/zone/c/project/p7/build/b/output/output.log', ({ request }) => {
+        seen = new URL(request.url)
+        return HttpResponse.text('log')
+      }),
+    )
+    await makeRest().downloadOutputFile('/project/p7/build/b/output/output.log', {
+      pdfDownloadDomain: 'https://cdn.o.example/zone/c', compileGroup: 'standard', clsiServerId: 'clsi-7',
+    })
+    expect(seen!.searchParams.get('clsiserverid')).toBe('clsi-7')
+    expect(seen!.searchParams.get('compileGroup')).toBe('standard')
+  })
+
+  it('keeps the session cookie and proxy headers on the Overleaf origin', async () => {
+    const headersAt: Record<string, Headers> = {}
+    server.use(
+      http.get('https://cdn.o.example/project/p7/build/b/output/output.log', ({ request }) => {
+        headersAt.cdn = request.headers
+        return HttpResponse.text('log')
+      }),
+      http.get('https://o.example/project/p7/build/b/output/output.log', ({ request }) => {
+        headersAt.origin = request.headers
+        return HttpResponse.text('log')
+      }),
+    )
+    const rest = makeRest()
+    await rest.downloadOutputFile('/project/p7/build/b/output/output.log', { pdfDownloadDomain: 'https://cdn.o.example' })
+    await rest.downloadOutputFile('/project/p7/build/b/output/output.log')
+    expect(headersAt.cdn!.get('cookie')).toBeNull()
+    expect(headersAt.origin!.get('cookie')).toContain('=')
   })
 })

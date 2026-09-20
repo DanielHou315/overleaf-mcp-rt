@@ -1,6 +1,6 @@
 import type { ServerContext } from '../server.js'
 import { OverleafError } from '../../errors.js'
-import type { DownloadedBytes } from '../../overleaf/rest.js'
+import type { DownloadedBytes, OutputLocation } from '../../overleaf/rest.js'
 
 interface CompileResult {
   status: string
@@ -9,11 +9,16 @@ interface CompileResult {
   pdfDownloadDomain?: string
 }
 
+/** Compile result plus what is needed to fetch its files; the latter is not shown to the agent. */
+interface LocatedCompile extends CompileResult {
+  where: OutputLocation
+}
+
 async function compileAndCache(
   ctx: ServerContext,
   projectId: string,
   opts: { draft?: boolean; stopOnFirstError?: boolean } = {},
-): Promise<CompileResult> {
+): Promise<LocatedCompile> {
   const res = await ctx.rest.compile(projectId, opts)
   const pdf = res.outputFiles.find((f) => f.type === 'pdf' || f.path === 'output.pdf')
   const log = res.outputFiles.find((f) => f.type === 'log' || f.path === 'output.log')
@@ -22,6 +27,7 @@ async function compileAndCache(
     pdfUrl: pdf?.url ?? null,
     logUrl: log?.url ?? null,
     pdfDownloadDomain: res.pdfDownloadDomain,
+    where: { pdfDownloadDomain: res.pdfDownloadDomain, compileGroup: res.compileGroup, clsiServerId: res.clsiServerId },
   }
 }
 
@@ -29,10 +35,11 @@ export async function handleCompile(
   ctx: ServerContext,
   input: { projectId: string; draft?: boolean; stopOnFirstError?: boolean },
 ): Promise<CompileResult> {
-  return compileAndCache(ctx, input.projectId, {
+  const { where: _where, ...result } = await compileAndCache(ctx, input.projectId, {
     draft: input.draft,
     stopOnFirstError: input.stopOnFirstError,
   })
+  return result
 }
 
 export async function handleReadCompileLog(
@@ -47,7 +54,7 @@ export async function handleReadCompileLog(
       { status: result.status },
     )
   }
-  const { bytes } = await ctx.rest.downloadOutputFile(result.logUrl, result.pdfDownloadDomain)
+  const { bytes } = await ctx.rest.downloadOutputFile(result.logUrl, result.where)
   return { log: bytes.toString('utf-8') }
 }
 
@@ -66,9 +73,6 @@ export async function handleDownloadPdf(
       `No PDF produced for project ${input.projectId} (compile status: ${result.status})`,
     )
   }
-  const { bytes, contentType } = await ctx.rest.downloadOutputFile(
-    result.pdfUrl,
-    result.pdfDownloadDomain,
-  )
+  const { bytes, contentType } = await ctx.rest.downloadOutputFile(result.pdfUrl, result.where)
   return { bytes, contentType, status: result.status }
 }
