@@ -67,8 +67,8 @@ Requires Node.js ≥ 20.
 ## Quick start
 
 ```bash
-# 1. Get a session cookie (paste from devtools or use --email/--password)
-npx overleaf-mcp-rt login --url https://overleaf.example.com
+# 1. Sign in: opens a browser window, you log in as usual, the session is captured
+npx overleaf-mcp-rt login --url https://overleaf.example.com --browser
 
 # 2. Smoke test connectivity, auth, and OT handshake
 npx overleaf-mcp-rt diagnose
@@ -91,7 +91,8 @@ npx overleaf-mcp-rt diagnose --host overleaf.com
 - A host's name defaults to its hostname without `www.`; `--name` overrides it. Logging in again under the same name just refreshes that host's cookie.
 - Every MCP tool takes an optional **`host`** argument, and `overleaf_list_hosts` tells the agent what exists. Selection is per call rather than a "current host" switch, so parallel tool calls can't race each other onto the wrong instance. Omit `host` to use the default. Project ids only mean something on the host they came from.
 - Each host has its own session, OT connections and external-change tracking. Hosts are authenticated on first use, and the credentials file is re-read on every call, so you can add or refresh a host while the MCP server is running.
-- Credentials live in `~/.config/overleaf-mcp-rt/credentials.json` (mode 0600) as `{ "default": "<name>", "hosts": { "<name>": { url, session_cookie, extra_headers } } }`. The single-host file written by earlier versions is still read and is upgraded in place by the next `login`. `OVERLEAF_URL` / `OVERLEAF_SESSION_COOKIE` / `OVERLEAF_EXTRA_HEADERS` still work: they define (or override) the host for that URL and make it the default.
+- Credentials live in `~/.config/overleaf-mcp-rt/credentials.json` (mode 0600) as `{ "default": "<name>", "hosts": { "<name>": { url, session_cookie, extra_headers } } }`. The single-host file written by earlier versions is still read and is upgraded in place by the next `login`. `OVERLEAF_CREDENTIALS_FILE` relocates the file. `OVERLEAF_URL` / `OVERLEAF_SESSION_COOKIE` / `OVERLEAF_EXTRA_HEADERS` still work: they define (or override) the host for that URL and make it the default.
+- **Browser login (`--browser`, the default choice at the prompt):** Overleaf has no OAuth or device flow for third-party clients, and hosted instances put CAPTCHA, SSO or 2FA in front of the password form — so the login that always works is the real one in a real browser. `login --browser` launches your installed Chrome / Chromium / Edge / Brave with a **throwaway profile** (your everyday profile is never touched), opens the instance's login page, and waits. Once you're signed in it reads the session cookie over the DevTools protocol (which, unlike page JavaScript, can see `HttpOnly` cookies), validates it, saves it, closes the window and deletes the profile. With `--url` and `--browser` both given there are no prompts, so it also works from non-interactive runners. `OVERLEAF_BROWSER=/path/to/browser` picks a specific binary. `--cookie` and `--email` remain for headless machines.
 - **Pasting a cookie:** `login` accepts either the bare value or `name=value`, and works out whether the instance wants `overleaf_session2` (overleaf.com), `overleaf.sid` (CE ≥ 5) or `sharelatex.sid` (older CE). overleaf.com's password form is CAPTCHA-protected, so cookie paste is the only way in there: in your browser's devtools open Application → Cookies → `https://www.overleaf.com` and copy `overleaf_session2`.
 
 ## MCP client config
@@ -326,7 +327,7 @@ No. The MCP server connects as a regular collaborator, so other browser sessions
 **Does it work with overleaf.com (the hosted SaaS)?**
 Yes, for projects on Overleaf's classic OT pipeline. Verified live against production overleaf.com: reads, string edits, create/delete, external-change reports, and an agent editing while a human typed in the browser in three places — both sides ended byte-identical, with agent edits showing up in the browser editor ~100 ms after being sent. Things to know:
 
-- **Log in by pasting a cookie** (`login --url https://www.overleaf.com --name overleaf.com`); the password form is CAPTCHA-protected. If devtools shows two `overleaf_session2` cookies, use the one for the `.overleaf.com` domain — `login` validates whatever you paste before saving it.
+- **Log in with `login --url https://www.overleaf.com --name overleaf.com --browser`** — the password form is CAPTCHA-protected, so email/password login can't work there. Pasting a cookie also works; if devtools shows two `overleaf_session2` cookies, use the one for the `.overleaf.com` domain — `login` validates whatever you paste before saving it.
 - The server fetches overleaf.com's load-balancer stickiness cookie (`GCLB`) automatically so the Socket.IO handshake and websocket reach the same backend.
 - **history-OT projects are not supported yet.** Overleaf is migrating projects to a new OT format (`otMigrationStage` > 0). For those, overleaf.com refuses `joinDoc` from clients that don't speak it, so doc reads/writes fail with a clear error (nothing is corrupted); REST-backed tools (`list_projects`, `compile`, `download_pdf`, tree operations) still work. You can check a project by looking for `<meta name="ol-otMigrationStage">` on its editor page.
 - You are automating your own account on a shared production service: keep edit rates humane. This project is not affiliated with Overleaf.

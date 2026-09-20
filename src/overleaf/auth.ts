@@ -180,7 +180,7 @@ export async function fetchStickyCookies(input: AuthInput): Promise<string> {
 }
 
 /** Session cookie names, newest first: overleaf.com, CE >= 5, CE < 5. */
-const SESSION_COOKIE_NAMES = ['overleaf_session2', 'overleaf.sid', 'sharelatex.sid']
+export const SESSION_COOKIE_NAMES = ['overleaf_session2', 'overleaf.sid', 'sharelatex.sid']
 
 /**
  * Accept what people actually paste from devtools: a full `name=value` pair
