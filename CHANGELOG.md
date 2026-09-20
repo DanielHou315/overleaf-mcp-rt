@@ -4,6 +4,10 @@ All notable changes to `overleaf-mcp-rt`. The format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-09-20
+
+Projects that Overleaf has moved to its newer document format (history-OT) no longer fail to open: they can be read, and edited if you opt in. Nothing changes for classic projects — which today is every project most people have.
+
 ### Added
 
 - **Projects on Overleaf's newer document format (history-OT) can be read, and — opt-in — edited.** Overleaf is migrating projects (`otMigrationStage` > 0) from the ShareJS text type to the operation format of its history system; until now such a project's documents could not be opened at all ("client does not support history-ot"). The engine now detects the format per document, declares support when joining, converts edits to and from text operations at the socket, and predicts the server's handling of an in-flight edit with a port of Overleaf's own algorithm for that format — so live co-editing, `<external-changes>`, write guards and everything else behave as on classic projects. **Writes to such documents are off by default** (`HISTORY_OT_WRITES_DISABLED`, nothing sent; enable with `OVERLEAF_HISTORY_OT_WRITES=1`): a write the server rejects disconnects everyone in the document, and the format could only be verified against Community Edition, not overleaf.com. The first write to each such document is checked against a fresh server snapshot; a difference raises `HISTORY_OT_MISMATCH` and stops further writes for the session. `overleaf_add_comment` refuses on such documents (`COMMENTS_UNSUPPORTED`, before creating a thread): anchoring uses a different operation that could not be verified. Verified live against Community Edition 6.0.1 and 6.3.0 with a project switched to the format; no migrated project on overleaf.com was available to test against.
