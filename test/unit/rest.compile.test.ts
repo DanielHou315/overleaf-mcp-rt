@@ -24,8 +24,8 @@ describe('OverleafRest.compile', () => {
   it('POSTs and returns the parsed compile response', async () => {
     server.use(
       http.post('https://o.example/project/p1/compile', async ({ request }) => {
-        const url = new URL(request.url)
-        expect(url.searchParams.get('auto_compile')).toBe('true')
+        // Not an editor keystroke-compile: those are throttled server-wide.
+        expect(new URL(request.url).searchParams.has('auto_compile')).toBe(false)
         const body = (await request.json()) as Record<string, unknown>
         expect(body.draft).toBe(false)
         expect(body.stopOnFirstError).toBe(false)
@@ -53,6 +53,42 @@ describe('OverleafRest.compile', () => {
       }),
     )
     await makeRest().compile('p1', { draft: true, stopOnFirstError: true })
+  })
+})
+
+describe('OverleafRest.compile when the project was compiled less than a second ago', () => {
+  // Found by the live suite: compile → read_compile_log back to back got
+  // {status: 'too-recently-compiled', outputFiles: []} and reported "no log".
+  it('waits out the server\'s one-second window and compiles again', async () => {
+    let calls = 0
+    server.use(
+      http.post('https://o.example/project/p1/compile', () => {
+        calls += 1
+        return calls === 1
+          ? HttpResponse.json({ status: 'too-recently-compiled', outputFiles: [] })
+          : HttpResponse.json({ status: 'success', outputFiles: [{ path: 'output.log', url: '/l', type: 'log' }] })
+      }),
+    )
+    const rest = makeRest()
+    rest.compileRetryDelayMs = 5
+    const result = await rest.compile('p1')
+    expect(calls).toBe(2)
+    expect(result.status).toBe('success')
+    expect(result.outputFiles).toHaveLength(1)
+  })
+
+  it('retries once only, and hands back the status if the server still refuses', async () => {
+    let calls = 0
+    server.use(
+      http.post('https://o.example/project/p1/compile', () => {
+        calls += 1
+        return HttpResponse.json({ status: 'too-recently-compiled', outputFiles: [] })
+      }),
+    )
+    const rest = makeRest()
+    rest.compileRetryDelayMs = 5
+    expect((await rest.compile('p1')).status).toBe('too-recently-compiled')
+    expect(calls).toBe(2)
   })
 })
 

@@ -41,7 +41,11 @@ export async function handleReadCompileLog(
 ): Promise<{ log: string }> {
   const result = await compileAndCache(ctx, input.projectId)
   if (!result.logUrl) {
-    throw new OverleafError('NOT_FOUND', `No log produced for project ${input.projectId}`)
+    throw new OverleafError(
+      'NOT_FOUND',
+      `The compile of project ${input.projectId} produced no log (compile status: ${result.status})`,
+      { status: result.status },
+    )
   }
   const { bytes } = await ctx.rest.downloadOutputFile(result.logUrl, result.pdfDownloadDomain)
   return { log: bytes.toString('utf-8') }

@@ -87,7 +87,8 @@ export class FakeOverleaf {
 
   private applyAgentOp(docId: string, update: { op: OtOp[]; v: number }): void {
     const doc = this.docs.get(docId)!
-    let op = update.op
+    // UpdateManager._sanitizeUpdate: surrogates in inserts become U+FFFD; the sender is not told.
+    let op = update.op.map((c) => (c.i === undefined ? c : { ...c, i: c.i.replace(/[\uD800-\uDFFF]/g, '\uFFFD') }))
     try {
       for (let v = update.v; v < doc.version; v++) op = transformOps(op, doc.history.get(v)!, 'left')
       doc.text = applyOps(doc.text, op)

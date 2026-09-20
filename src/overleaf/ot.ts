@@ -10,7 +10,7 @@ import type {
   ProjectEntity,
 } from './ot.types.js'
 import { NetworkError, OverleafError } from '../errors.js'
-import { computeOps, type OtOp } from './diff.js'
+import { computeOps, sanitizeOps, type OtOp } from './diff.js'
 import { applyOps as applyTextOps, transformOps } from './text-ot.js'
 import type { UpdateSchema } from './ot.types.js'
 
@@ -46,6 +46,8 @@ export interface UpdateResult {
   versionBefore: number
   versionAfter: number
   ops: OtOp[]
+  /** UTF-16 code units Overleaf cannot store (non-BMP characters) that were sent as U+FFFD instead. */
+  unstorableCodeUnits: number
 }
 
 /** A change made by someone else to a doc the agent has already looked at. */
@@ -509,11 +511,12 @@ export class OtEngine {
     // No awaits from here to the emit: text, version and ops must be consistent.
     const textBefore = baseline.text
     const versionBefore = baseline.version
-    const ops = build(textBefore)
+    // Send what the server will store, not what it will silently rewrite (see sanitizeOps).
+    const { ops, replaced: unstorableCodeUnits } = sanitizeOps(build(textBefore))
     if (ops.length === 0) {
       this.reportExternal(docId, textBefore, versionBefore)
       this.markSeen(docId, textBefore, versionBefore)
-      return { textBefore, textAfter: textBefore, versionBefore, versionAfter: versionBefore, ops }
+      return { textBefore, textAfter: textBefore, versionBefore, versionAfter: versionBefore, ops, unstorableCodeUnits }
     }
 
     // The applyOtUpdate ack only means real-time queued the op in Redis. The
@@ -550,6 +553,7 @@ export class OtEngine {
       versionBefore,
       versionAfter: after.version,
       ops,
+      unstorableCodeUnits,
     }
   }
 

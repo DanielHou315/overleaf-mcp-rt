@@ -59,12 +59,33 @@ export class OverleafRest {
     }))
   }
 
+  /**
+   * A deliberate compile, not `?auto_compile=true`: that flag marks the
+   * editor's compile-on-keystroke, which the server throttles per user and
+   * server-wide ("autocompile-backoff"). Every compile is still limited to one
+   * per project per second ("too-recently-compiled", CompileManager.COMPILE_DELAY);
+   * tools that compile back to back (compile → read log → download PDF) run into
+   * that, so wait it out once rather than report a compile with no output.
+   */
   async compile(
     projectId: string,
     opts: { draft?: boolean; stopOnFirstError?: boolean; rootResourcePath?: string } = {},
   ): Promise<CompileResponse> {
+    const first = await this.compileOnce(projectId, opts)
+    if (first.status !== 'too-recently-compiled') return first
+    await new Promise((r) => setTimeout(r, this.compileRetryDelayMs))
+    return this.compileOnce(projectId, opts)
+  }
+
+  /** Just over the server's one-second window. Tests shorten it. */
+  compileRetryDelayMs = 1200
+
+  private async compileOnce(
+    projectId: string,
+    opts: { draft?: boolean; stopOnFirstError?: boolean; rootResourcePath?: string },
+  ): Promise<CompileResponse> {
     const res = await this.http.postJson(
-      `/project/${encodeURIComponent(projectId)}/compile?auto_compile=true`,
+      `/project/${encodeURIComponent(projectId)}/compile`,
       {
         check: 'silent',
         draft: opts.draft ?? false,

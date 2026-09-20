@@ -4,6 +4,13 @@ All notable changes to `overleaf-mcp-rt`. The format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Fixed
+
+Both found by the new live test suite running against real Overleaf servers.
+
+- **Writing an emoji could later get everyone disconnected from the doc.** Overleaf cannot store characters outside the Basic Multilingual Plane: its document-updater rewrites every UTF-16 surrogate in inserted text to U+FFFD, and only acknowledges the sender without telling it. The engine kept the original characters in its snapshot, so its next delete across that text did not match the server's and was rejected — and Overleaf answers a rejected op by disconnecting every client on the doc. The engine now applies the same rewrite before sending, so both sides always agree, and `overleaf_edit_doc` / `overleaf_write_doc` add a `notes` entry telling the agent which characters could not be stored.
+- **`overleaf_read_compile_log` / `overleaf_download_pdf` right after `overleaf_compile` failed with "No log produced".** Overleaf allows one compile per project per second and answers a second one with `too-recently-compiled` and no output files. Compiles now wait out that window once and retry; they are also no longer flagged as editor auto-compiles (`auto_compile=true`), which the server throttles per user and server-wide; and the error names the compile status when there really is no log.
+
 ## [2.0.0] — 2026-09-20
 
 First release since 1.1.1. (1.2.0 was prepared but never published; its changes are included here.) A major version because agent-visible behaviour changed in ways that can break existing prompts and integrations — see the next section.

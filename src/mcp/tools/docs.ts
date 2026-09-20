@@ -1,6 +1,7 @@
 import type { ServerContext } from '../server.js'
 import { DocChangedExternallyError, DocNotReadError, NotFoundError } from '../../errors.js'
 import type { DownloadedBytes } from '../../overleaf/rest.js'
+import { unstorableNote } from './edit.js'
 
 export interface WriteSummary {
   versionBefore: number
@@ -39,7 +40,7 @@ export async function handleReadFile(
 export async function handleWriteDoc(
   ctx: ServerContext,
   input: { projectId: string; path: string; content: string; overwrite?: boolean },
-): Promise<{ ok: true; summary: WriteSummary }> {
+): Promise<{ ok: true; summary: WriteSummary; notes?: string[] }> {
   const engine = await ctx.ot.get(input.projectId)
   const docId = engine.pathToDocId(input.path)
   if (docId === null) {
@@ -77,5 +78,6 @@ export async function handleWriteDoc(
       charsDelta: result.textAfter.length - result.textBefore.length,
       opsApplied: result.ops.length === 0 ? 0 : 1,
     },
+    ...(result.unstorableCodeUnits > 0 ? { notes: [unstorableNote(result.unstorableCodeUnits)] } : {}),
   }
 }

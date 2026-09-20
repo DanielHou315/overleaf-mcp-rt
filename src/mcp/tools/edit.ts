@@ -126,8 +126,22 @@ export async function handleEditDoc(
       input.edits.length,
     ),
     diff: renderDiff(input.path, result.textBefore, intended),
-    ...(notes.length ? { notes: [...notes] } : {}),
+    ...notesWith(notes, result.unstorableCodeUnits),
   }
+}
+
+/** Overleaf's own limitation, but the agent asked for text it did not get: say so. */
+export function unstorableNote(codeUnits: number): string {
+  return (
+    `Overleaf cannot store characters outside the Basic Multilingual Plane (emoji and some rare symbols): ` +
+    `${codeUnits / 2} such character(s) in your text were stored as U+FFFD replacement characters. ` +
+    'Use a LaTeX command or a BMP character instead.'
+  )
+}
+
+function notesWith(notes: string[], unstorableCodeUnits: number): { notes?: string[] } {
+  const all = unstorableCodeUnits > 0 ? [...notes, unstorableNote(unstorableCodeUnits)] : [...notes]
+  return all.length ? { notes: all } : {}
 }
 
 /** Apply edits in order, each to the result of the previous. Throws before anything is sent. */

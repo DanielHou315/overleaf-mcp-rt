@@ -161,3 +161,26 @@ describe('edit_doc dry_run', () => {
     expect(r.summary?.opsApplied).toBe(1)
   })
 })
+
+describe('edit_doc with characters Overleaf cannot store', () => {
+  it('tells the agent its emoji was stored as replacement characters, and stays in step with the server', async () => {
+    const h = await makeCtx('status: todo')
+    const r = await handleEditDoc(h.ctx, {
+      projectId: 'p', path: 'a.tex',
+      edits: [{ old_string: 'todo', new_string: 'done 🎉' }],
+    })
+    expect(h.text()).toBe('status: done ��')
+    expect(r.notes?.join('\n')).toMatch(/cannot store characters outside the Basic Multilingual Plane.*1 such character/s)
+
+    // The follow-up edit across that text is accepted rather than rejected.
+    await handleEditDoc(h.ctx, { projectId: 'p', path: 'a.tex', edits: [{ old_string: 'done ��', new_string: 'done' }] })
+    expect(h.text()).toBe('status: done')
+  })
+
+  it('says nothing when everything could be stored', async () => {
+    const h = await makeCtx('status: todo')
+    const r = await handleEditDoc(h.ctx, { projectId: 'p', path: 'a.tex', edits: [{ old_string: 'todo', new_string: 'terminé ✓ 完了' }] })
+    expect(h.text()).toBe('status: terminé ✓ 完了')
+    expect(r.notes).toBeUndefined()
+  })
+})
