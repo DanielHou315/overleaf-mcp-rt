@@ -1,14 +1,11 @@
 #!/usr/bin/env node
-import { writeFileSync, mkdirSync, chmodSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join, dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { realpathSync } from 'node:fs'
 import { createInterface } from 'node:readline/promises'
 import { stdin as input, stdout as output, stderr } from 'node:process'
-import { loadConfig } from './config.js'
-import { validateCookie, passportLogin } from './overleaf/auth.js'
-import { buildContext, runMcpServer, type ServerContext } from './mcp/server.js'
+import { hostNameForUrl, loadConfig, loadHosts, saveHost } from './config.js'
+import { validateCookie, passportLogin, resolvePastedCookie, fetchStickyCookies } from './overleaf/auth.js'
+import { buildContext, runMcpServer, HostRegistry } from './mcp/server.js'
 import { InvalidConfigError, OverleafError, AuthFailedError } from './errors.js'
 import { OverleafHttp } from './overleaf/http.js'
 import { OverleafRest } from './overleaf/rest.js'
@@ -20,10 +17,19 @@ overleaf-mcp-rt — MCP server for Overleaf Community Edition (v1.0)
 
 Usage:
   overleaf-mcp-rt                Run as MCP stdio server (default).
-  overleaf-mcp-rt login          Interactive: paste a cookie or log in with email + password.
-  overleaf-mcp-rt ls             List accessible projects (smoke test).
-  overleaf-mcp-rt diagnose       Verify connectivity, auth, and (eventually) OT handshake.
+  overleaf-mcp-rt login          Add or refresh a host: paste a cookie or log in with email + password.
+                                 --url <url> [--name <name>] [--default] [--cookie <cookie>]
+                                 [--email <email>] [--header KEY=VALUE]...
+  overleaf-mcp-rt hosts          List configured hosts.
+  overleaf-mcp-rt ls [--host <name>]         List accessible projects (smoke test).
+  overleaf-mcp-rt diagnose [--host <name>]   Verify connectivity, auth, and OT handshake.
   overleaf-mcp-rt --help         Show this help.
+
+Several Overleaf instances can be configured side by side (run \`login\` once per
+instance). MCP tools take an optional \`host\` argument; the default host is used
+when it is omitted. overleaf.com only supports cookie login (its password form
+is CAPTCHA-protected): copy the \`overleaf_session2\` cookie from your browser's
+devtools (Application > Cookies).
 
 Environment variables:
   OVERLEAF_URL                Required. e.g. https://overleaf.example.com
@@ -129,7 +135,9 @@ export async function runDiagnose(
     let engine: OtEngine | undefined
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined
     try {
-      const sock = new OverleafSocket({ url: cfg.url, projectId, sessionCookie: cfg.sessionCookie, extraHeaders: cfg.extraHeaders })
+      const sticky = await fetchStickyCookies(cfg)
+      if (sticky) writeLine(`✓ load balancer — stickiness cookie ${sticky.split('=')[0]} obtained`)
+      const sock = new OverleafSocket({ url: cfg.url, projectId, sessionCookie: sticky ? `${cfg.sessionCookie}; ${sticky}` : cfg.sessionCookie, extraHeaders: cfg.extraHeaders })
       engine = new OtEngine({ socket: sock, projectId })
       await Promise.race([
         engine.connect(),
@@ -171,8 +179,14 @@ async function main() {
     return
   }
 
+  if (cmd === 'hosts') {
+    const { hosts, defaultHost } = loadHosts()
+    for (const h of hosts) output.write(`${h.name}\t${h.url}${h.name === defaultHost ? '\t(default)' : ''}\n`)
+    return
+  }
+
   if (cmd === 'ls') {
-    const cfg = loadConfig()
+    const cfg = loadConfig({ host: flagValue(rest, '--host') })
     const csrfToken = await validateCookie({
       url: cfg.url,
       sessionCookie: cfg.sessionCookie,
@@ -187,7 +201,7 @@ async function main() {
   }
 
   if (cmd === 'diagnose') {
-    const cfg = loadConfig()
+    const cfg = loadConfig({ host: flagValue(rest, '--host') })
     const projectId = rest.find((a) => a === '--project-id') != null
       ? rest[rest.indexOf('--project-id') + 1]
       : undefined
@@ -195,29 +209,19 @@ async function main() {
     process.exit(result.ok ? 0 : 2)
   }
 
-  // Default: MCP stdio server. Config and cookie are checked on the first tool
-  // call, not here: exiting before the MCP handshake shows up in hosts as an
-  // unexplained "connection closed". A failed attempt isn't cached, so
-  // running `login` fixes a live session without restarting the server.
-  let ready: Promise<ServerContext> | undefined
-  await runMcpServer(() => {
-    ready ??= (async () => {
-      const cfg = loadConfig()
-      const csrfToken = await validateCookie({
-        url: cfg.url,
-        sessionCookie: cfg.sessionCookie,
-        extraHeaders: cfg.extraHeaders,
-      })
-      return buildContext({ ...cfg, csrfToken })
-    })().catch((err: unknown) => {
-      ready = undefined
-      throw err
-    })
-    return ready
-  })
+  // Default: MCP stdio server. Hosts are loaded and authenticated on first
+  // use, not here (see HostRegistry).
+  await runMcpServer(new HostRegistry())
+}
+
+function flagValue(argv: string[], flag: string): string | undefined {
+  const i = argv.indexOf(flag)
+  return i >= 0 ? argv[i + 1] : undefined
 }
 
 interface LoginArgs {
+  name?: string
+  makeDefault: boolean
   url?: string
   email?: string
   cookie?: string
@@ -225,10 +229,12 @@ interface LoginArgs {
 }
 
 function parseLoginArgs(argv: string[]): LoginArgs {
-  const args: LoginArgs = { headers: [] }
+  const args: LoginArgs = { headers: [], makeDefault: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!
     if (a === '--url') args.url = argv[++i]
+    else if (a === '--name') args.name = argv[++i]
+    else if (a === '--default') args.makeDefault = true
     else if (a === '--email') args.email = argv[++i]
     else if (a === '--cookie') args.cookie = argv[++i]
     else if (a === '--header') args.headers.push(argv[++i]!)
@@ -254,8 +260,10 @@ async function runLogin(argv: string[]) {
   }
 
   let sessionCookie: string
+  const pasteCookie = async (pasted: string) =>
+    (await resolvePastedCookie({ url, pasted, extraHeaders })).sessionCookie
   if (args.cookie) {
-    sessionCookie = args.cookie
+    sessionCookie = await pasteCookie(args.cookie)
   } else {
     const useCookie = (
       await rl.question('Auth method? [c]ookie paste / [p]assword login: ')
@@ -263,7 +271,9 @@ async function runLogin(argv: string[]) {
       .trim()
       .toLowerCase()
     if (useCookie.startsWith('c')) {
-      sessionCookie = (await rl.question('Paste overleaf_session2 cookie: ')).trim()
+      sessionCookie = await pasteCookie(
+        await rl.question('Paste the session cookie (overleaf_session2 / overleaf.sid; value or name=value): '),
+      )
     } else {
       const email = args.email ?? (await rl.question('Email: ')).trim()
       const password = await rl.question('Password: ')
@@ -277,14 +287,9 @@ async function runLogin(argv: string[]) {
   await validateCookie({ url, sessionCookie, extraHeaders })
   stderr.write(`✓ Cookie valid; CSRF token scraped\n`)
 
-  const target = join(homedir(), '.config', 'overleaf-mcp-rt', 'credentials.json')
-  mkdirSync(dirname(target), { recursive: true })
-  writeFileSync(
-    target,
-    JSON.stringify({ url, session_cookie: sessionCookie, extra_headers: extraHeaders }, null, 2),
-  )
-  chmodSync(target, 0o600)
-  stderr.write(`✓ Credentials saved to ${target}\n`)
+  const name = args.name ?? hostNameForUrl(url)
+  const saved = saveHost({ name, url, sessionCookie, extraHeaders }, { makeDefault: args.makeDefault })
+  stderr.write(`✓ Saved host "${name}"${saved.isDefault ? ' (default)' : ''} to ${saved.path}\n`)
   rl.close()
 }
 

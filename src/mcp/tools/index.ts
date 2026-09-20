@@ -251,11 +251,42 @@ const TOOL_DEFINITIONS = [
  * (and that a fresh `login` fixes without restarting) rather than as a server
  * that dies before the MCP handshake.
  */
-export type ContextSource = ServerContext | (() => Promise<ServerContext>)
+export type ContextSource = ServerContext | (() => Promise<ServerContext>) | HostSource
+
+/** Several Overleaf instances, selected per call by the `host` argument (see HostRegistry). */
+export interface HostSource {
+  get(name?: string): Promise<ServerContext>
+  list(): Array<{ name: string; url: string; isDefault: boolean; connected: boolean }>
+}
+
+function isHostSource(source: ContextSource): source is HostSource {
+  return typeof source === 'object' && 'list' in source && typeof source.list === 'function'
+}
+
+const HOST_PROPERTY = {
+  type: 'string',
+  description:
+    'Which configured Overleaf instance to use (a name from overleaf_list_hosts). Omit for the default host. Project ids are only meaningful on the host they came from.',
+} as const
+
+const LIST_HOSTS_TOOL = {
+  name: 'overleaf_list_hosts',
+  description:
+    'List the Overleaf instances this server is logged in to (e.g. a self-hosted server and overleaf.com), and which one is the default. Every other tool takes an optional `host` argument to pick one per call.',
+  inputSchema: { type: 'object', properties: {}, required: [] },
+} as const
 
 export function registerAllTools(server: Server, source: ContextSource) {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: TOOL_DEFINITIONS.map((t) => ({ ...t })),
+    tools: isHostSource(source)
+      ? [
+          LIST_HOSTS_TOOL,
+          ...TOOL_DEFINITIONS.map((t) => ({
+            ...t,
+            inputSchema: { ...t.inputSchema, properties: { ...t.inputSchema.properties, host: HOST_PROPERTY } },
+          })),
+        ]
+      : TOOL_DEFINITIONS.map((t) => ({ ...t })),
   }))
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
@@ -263,7 +294,12 @@ export function registerAllTools(server: Server, source: ContextSource) {
     const projectId = typeof args.projectId === 'string' ? args.projectId : undefined
     let ctx: ServerContext | undefined
     try {
-      ctx = typeof source === 'function' ? await source() : source
+      if (isHostSource(source)) {
+        if (name === 'overleaf_list_hosts') return wrap({ hosts: source.list() })
+        ctx = await source.get(typeof args.host === 'string' ? args.host : undefined)
+      } else {
+        ctx = typeof source === 'function' ? await source() : source
+      }
       return withExternalChanges(ctx, projectId, await dispatch(ctx, name, args))
     } catch (err) {
       if (err instanceof OverleafError) {

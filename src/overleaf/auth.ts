@@ -143,3 +143,67 @@ export async function passportLogin(input: PassportInput): Promise<SessionIdenti
 
   return { sessionCookie, csrfToken }
 }
+
+/**
+ * Cookies a load balancer sets to pin a client to one backend (overleaf.com
+ * sits behind Google's LB and sets `GCLB`). Socket.IO 0.9 does an XHR
+ * handshake and then a separate websocket upgrade; if those land on different
+ * real-time pods the session id is unknown to the second one. Sending the
+ * stickiness cookie on both keeps them together. Overleaf's own editor gets
+ * this for free from the browser's cookie jar; Overleaf-Workshop does the same
+ * fetch (`updateCookies`). A single-node CE install sets nothing, so this
+ * returns ''.
+ */
+export async function fetchStickyCookies(input: AuthInput): Promise<string> {
+  const headers = new Headers()
+  if (input.sessionCookie) headers.set('Cookie', input.sessionCookie)
+  applyExtraHeaders(headers, input.extraHeaders)
+  let res: Response
+  try {
+    res = await fetch(new URL('/socket.io/socket.io.js', input.url + '/').toString(), {
+      method: 'GET',
+      headers,
+      redirect: 'manual',
+    })
+  } catch {
+    return '' // best effort: a single-node instance doesn't need it
+  }
+  // Drain the (small) script so the connection is released; cancelling the
+  // stream instead can hang.
+  await res.arrayBuffer().catch(() => undefined)
+  const have = new Set((input.sessionCookie ?? '').split(';').map((c) => c.split('=')[0]!.trim()))
+  return res.headers
+    .getSetCookie()
+    .map((c) => c.split(';')[0]!.trim())
+    .filter((pair) => pair.includes('=') && !have.has(pair.split('=')[0]!))
+    .join('; ')
+}
+
+/** Session cookie names, newest first: overleaf.com, CE >= 5, CE < 5. */
+const SESSION_COOKIE_NAMES = ['overleaf_session2', 'overleaf.sid', 'sharelatex.sid']
+
+/**
+ * Accept what people actually paste from devtools: a full `name=value` pair
+ * (or whole Cookie header), or just the value. For a bare value, find the
+ * cookie name this instance accepts. Returns the working cookie string and
+ * the CSRF token scraped while validating it.
+ */
+export async function resolvePastedCookie(
+  input: Omit<AuthInput, 'sessionCookie'> & { pasted: string },
+): Promise<SessionIdentity> {
+  const pasted = input.pasted.trim().replace(/^cookie:\s*/i, '')
+  const candidates = /^[^=;\s]+=/.test(pasted)
+    ? [pasted]
+    : SESSION_COOKIE_NAMES.map((name) => `${name}=${pasted}`)
+  let lastError: unknown
+  for (const sessionCookie of candidates) {
+    try {
+      const csrfToken = await validateCookie({ ...input, sessionCookie })
+      return { sessionCookie, csrfToken }
+    } catch (err) {
+      lastError = err
+      if (!(err instanceof AuthFailedError)) throw err
+    }
+  }
+  throw lastError
+}
