@@ -4,6 +4,10 @@ All notable changes to `overleaf-mcp-rt`. The format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-09-20
+
+Installable in Codex, verified against real servers, and five bugs fewer. The new live test suite runs the built server against throw-away Overleaf Community Edition instances (4.2, 5.5, 6.0, 6.3) and against overleaf.com; everything under *Fixed* below marked as found by it was invisible to the unit tests.
+
 ### Added
 
 - **Codex plugin.** `.codex-plugin/plugin.json` makes the repository installable with `codex plugin marketplace add DanielHou315/overleaf-mcp-rt` + `codex plugin add overleaf-mcp-rt@overleaf-mcp-rt`: the MCP server, the four skills, and the two commands (which Codex turns into skills). Codex could already install from the Claude Code manifest, but it does not expand the plugin-root variable in MCP arguments, so the server silently never started.
