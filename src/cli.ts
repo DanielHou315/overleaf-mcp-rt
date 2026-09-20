@@ -6,6 +6,7 @@ import { stdin as input, stdout as output, stderr } from 'node:process'
 import { hostNameForUrl, loadConfig, loadHosts, saveHost } from './config.js'
 import { validateCookie, passportLogin, resolvePastedCookie, fetchStickyCookies } from './overleaf/auth.js'
 import { buildContext, runMcpServer, HostRegistry } from './mcp/server.js'
+import { browserLogin } from './overleaf/browser-login.js'
 import { InvalidConfigError, OverleafError, AuthFailedError } from './errors.js'
 import { OverleafHttp } from './overleaf/http.js'
 import { OverleafRest } from './overleaf/rest.js'
@@ -17,9 +18,10 @@ overleaf-mcp-rt — MCP server for Overleaf Community Edition (v1.0)
 
 Usage:
   overleaf-mcp-rt                Run as MCP stdio server (default).
-  overleaf-mcp-rt login          Add or refresh a host: paste a cookie or log in with email + password.
-                                 --url <url> [--name <name>] [--default] [--cookie <cookie>]
-                                 [--email <email>] [--header KEY=VALUE]...
+  overleaf-mcp-rt login          Add or refresh a host. Opens a browser window to sign in (--browser),
+                                 or takes a pasted cookie (--cookie) or email + password (--email).
+                                 --url <url> [--name <name>] [--default] [--browser]
+                                 [--cookie <cookie>] [--email <email>] [--header KEY=VALUE]...
   overleaf-mcp-rt hosts          List configured hosts.
   overleaf-mcp-rt ls [--host <name>]         List accessible projects (smoke test).
   overleaf-mcp-rt diagnose [--host <name>]   Verify connectivity, auth, and OT handshake.
@@ -27,9 +29,13 @@ Usage:
 
 Several Overleaf instances can be configured side by side (run \`login\` once per
 instance). MCP tools take an optional \`host\` argument; the default host is used
-when it is omitted. overleaf.com only supports cookie login (its password form
-is CAPTCHA-protected): copy the \`overleaf_session2\` cookie from your browser's
-devtools (Application > Cookies).
+when it is omitted.
+
+\`login --browser\` launches your installed Chrome/Chromium/Edge/Brave with a
+throwaway profile; sign in there as usual (CAPTCHA, SSO and 2FA all work) and the
+session is picked up automatically. This is the way to log in to overleaf.com,
+whose password form is CAPTCHA-protected. Set OVERLEAF_BROWSER to use a specific
+browser binary. Alternatively paste the \`overleaf_session2\` cookie from devtools.
 
 Environment variables:
   OVERLEAF_URL                Required. e.g. https://overleaf.example.com
@@ -220,6 +226,7 @@ function flagValue(argv: string[], flag: string): string | undefined {
 }
 
 interface LoginArgs {
+  browser: boolean
   name?: string
   makeDefault: boolean
   url?: string
@@ -229,12 +236,13 @@ interface LoginArgs {
 }
 
 function parseLoginArgs(argv: string[]): LoginArgs {
-  const args: LoginArgs = { headers: [], makeDefault: false }
+  const args: LoginArgs = { headers: [], makeDefault: false, browser: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!
     if (a === '--url') args.url = argv[++i]
     else if (a === '--name') args.name = argv[++i]
     else if (a === '--default') args.makeDefault = true
+    else if (a === '--browser') args.browser = true
     else if (a === '--email') args.email = argv[++i]
     else if (a === '--cookie') args.cookie = argv[++i]
     else if (a === '--header') args.headers.push(argv[++i]!)
@@ -262,15 +270,21 @@ async function runLogin(argv: string[]) {
   let sessionCookie: string
   const pasteCookie = async (pasted: string) =>
     (await resolvePastedCookie({ url, pasted, extraHeaders })).sessionCookie
+  const viaBrowser = async () =>
+    (await browserLogin({ url, extraHeaders, onStatus: (m) => stderr.write(`${m}\n`) })).sessionCookie
   if (args.cookie) {
     sessionCookie = await pasteCookie(args.cookie)
+  } else if (args.browser) {
+    sessionCookie = await viaBrowser()
   } else {
     const useCookie = (
-      await rl.question('Auth method? [c]ookie paste / [p]assword login: ')
+      await rl.question('Auth method? [b]rowser window (recommended) / [c]ookie paste / [p]assword login: ')
     )
       .trim()
       .toLowerCase()
-    if (useCookie.startsWith('c')) {
+    if (useCookie === '' || useCookie.startsWith('b')) {
+      sessionCookie = await viaBrowser()
+    } else if (useCookie.startsWith('c')) {
       sessionCookie = await pasteCookie(
         await rl.question('Paste the session cookie (overleaf_session2 / overleaf.sid; value or name=value): '),
       )

@@ -45,7 +45,9 @@ interface CredentialsFile extends StoredHost {
   hosts?: Record<string, StoredHost>
 }
 
-export const DEFAULT_CREDENTIALS_PATH = join(homedir(), '.config', 'overleaf-mcp-rt', 'credentials.json')
+/** `OVERLEAF_CREDENTIALS_FILE` relocates the credentials file (tests, sandboxes, separate profiles). */
+export const DEFAULT_CREDENTIALS_PATH =
+  process.env.OVERLEAF_CREDENTIALS_FILE ?? join(homedir(), '.config', 'overleaf-mcp-rt', 'credentials.json')
 
 /** `https://www.overleaf.com` → `overleaf.com`; `https://tex.example.org:8443/x` → `tex.example.org`. */
 export function hostNameForUrl(url: string): string {
