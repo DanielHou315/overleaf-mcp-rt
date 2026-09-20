@@ -26,7 +26,7 @@ When making decisions, defer to the spec; if the spec is silent, raise it for di
 
 - **No fork of `sharelatex/sharelatex`.** Anything that requires modifying the Overleaf image is out of scope; we want clean upstream upgrades.
 - **AGPL-3.0-or-later** for everything we ship. Required because we port code from [Overleaf-Workshop](https://github.com/iamhyc/Overleaf-Workshop) (AGPL-3.0).
-- **Stock Overleaf CE 3.x – 5.x compatibility.** No Server Pro features.
+- **Stock Overleaf CE 3.x – 6.x compatibility**, with 6.x the primary target (the maintainer's instance runs 6.0.0). No Server Pro features.
 - **Reverse-proxy auth pass-through** (Cloudflare Access, basic auth, etc.) via configurable HTTP headers, applied to both REST and Socket.IO handshake.
 
 ## Tech stack

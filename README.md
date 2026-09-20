@@ -44,7 +44,7 @@ npx overleaf-mcp-rt@latest --help
 |---|---|---|
 | Works on personal / Community Edition Overleaf | ✅ | ❌ (Server Pro only) |
 | Latency to editor | live (per patch) | minutes (git push + bridge sync) |
-| Server requirements | stock Overleaf CE 3.x – 5.x | Overleaf Server Pro + git-bridge license |
+| Server requirements | stock Overleaf CE 3.x – 6.x | Overleaf Server Pro + git-bridge license |
 | "File changed externally" toast | never — edits arrive as co-author OT ops | yes — every git sync triggers it |
 | Auth model | session cookie | git over HTTPS / SSH |
 
@@ -239,6 +239,7 @@ v1.2 makes the server safe to use **while a human is editing the same doc in the
 - **`overleaf_write_doc` guards** — refuses to clobber unread or externally-changed docs (`DOC_NOT_READ`, `DOC_CHANGED_EXTERNALLY`); `overwrite: true` opts out.
 - **The server starts even when the cookie has expired.** Auth is checked on the first tool call and reported as `OVERLEAF_AUTH_FAILED` with a hint, instead of the process exiting before the MCP handshake (which hosts show as an unexplained "connection closed"). Running `overleaf-mcp-rt login` fixes a live session without restarting it.
 - `OT_VERSION_DRIFT` is no longer emitted: version tracking makes the retry loop it reported on unnecessary.
+- **Overleaf CE 6.x is supported.** The protocol work in this release was done against the 6.0.0 `real-time` / `document-updater` sources and verified live on a 6.0.0 instance: an agent making 60 rapid edits while a human typed in three places in the browser ended byte-identical on both sides, with no out-of-sync modal and no OT errors in the server logs. 6.x is now the primary target; 5.x was the original one, and the wire protocol used here is unchanged across 3.x – 6.x. (An automated multi-version test matrix is planned separately.)
 
 ## v1.1 release notes
 
@@ -264,7 +265,7 @@ This is the first stable release on npm. It bundles everything from the prior in
 - **`diagnose` CLI subcommand** — stepped report (config → REST → reverse-proxy → projects → OT) so failed setups surface the exact failing layer with a typed error code.
 - **Reverse-proxy auth pass-through** — `OVERLEAF_EXTRA_HEADERS` is merged into both the REST client and the Socket.IO handshake.
 - **Resilience** — per-doc write serialization (no baseline races), reconnect with jitter, OT-engine eviction signaling, WHATWG-URL normalization (subpath-safe), `pdfDownloadDomain` honored for overleaf.com REST flows.
-- **Compatibility** — stock Overleaf CE 3.x – 5.x. **No fork** of `sharelatex/sharelatex` and no patched server image required, so you can keep upgrading Overleaf cleanly.
+- **Compatibility** — stock Overleaf CE 3.x – 6.x. **No fork** of `sharelatex/sharelatex` and no patched server image required, so you can keep upgrading Overleaf cleanly.
 - **License** — AGPL-3.0-or-later (required because the OT/auth client is ported from Overleaf-Workshop).
 
 Pre-1.0 development happened under internal v0.1–v0.4 milestones; those are now collapsed into v1.0 and per-phase notes are kept only in [`docs/superpowers/plans/`](docs/superpowers/) for historical context.
@@ -295,7 +296,7 @@ Track or contribute via [GitHub issues](https://github.com/DanielHou315/overleaf
 ## FAQ
 
 **Does this require Overleaf Server Pro?**
-No. It targets stock **Overleaf Community Edition** (3.x – 5.x). The whole point of this project is to give personal/self-hosted CE users the same agent-driven editing experience that Server Pro git-bridge users get.
+No. It targets stock **Overleaf Community Edition** (3.x – 6.x). The whole point of this project is to give personal/self-hosted CE users the same agent-driven editing experience that Server Pro git-bridge users get.
 
 **Does this require git-bridge?**
 No. Edits are sent as live OT operations over Socket.IO — the same protocol Overleaf's web editor uses internally.

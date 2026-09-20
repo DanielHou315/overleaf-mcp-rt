@@ -124,7 +124,7 @@ export function closestRegion(
       const line = lines[i + j]!.trim()
       if (line === '') continue
       if (wantedSet.has(line)) score += 2
-      else if (wanted.some((w) => sharedPrefixRatio(w, line) > 0.6)) score += 1
+      else score += Math.max(0, ...wanted.map((w) => (wordOverlap(w, line) >= 0.5 ? wordOverlap(w, line) : 0)))
     }
     if (score > best.score) best = { score, at: i }
   }
@@ -136,9 +136,11 @@ export function closestRegion(
   }
 }
 
-function sharedPrefixRatio(a: string, b: string): number {
-  const n = Math.min(a.length, b.length)
-  let i = 0
-  while (i < n && a[i] === b[i]) i++
-  return i / Math.max(a.length, b.length, 1)
+/** Dice coefficient over words: robust to a changed word anywhere in the line. */
+function wordOverlap(a: string, b: string): number {
+  const wordsA = a.split(/\s+/).filter(Boolean)
+  const wordsB = new Set(b.split(/\s+/).filter(Boolean))
+  if (wordsA.length === 0 || wordsB.size === 0) return 0
+  const shared = wordsA.filter((w) => wordsB.has(w)).length
+  return (2 * shared) / (wordsA.length + wordsB.size)
 }
