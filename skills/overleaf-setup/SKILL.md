@@ -51,4 +51,6 @@ Most harnesses also have a one-liner, e.g. `claude mcp add overleaf -- npx -y ov
 | `PROXY_AUTH_FAILED` | A reverse proxy blocked the request | `OVERLEAF_EXTRA_HEADERS` |
 | `PROJECT_ACCESS_DENIED` | This account isn't a collaborator | User shares the project with it |
 | `COMMENTS_UNSUPPORTED` | Stock Community Edition has no review panel | Not fixable on that host |
-| joinDoc refused: "history-ot" | overleaf.com project on Overleaf's newer OT format | Doc reads/edits unsupported for that project; compile and file tools still work |
+| joinDoc refused: "history-ot" | Version of this tool older than 2.2.0, on a project using Overleaf's newer document format | Update `overleaf-mcp-rt` |
+| `HISTORY_OT_WRITES_DISABLED` | Project on Overleaf's newer document format: readable, but editing is opt-in | Tell the user; they enable it by starting the server with `OVERLEAF_HISTORY_OT_WRITES=1` (scratch file first). Until then give them the change as text |
+| `HISTORY_OT_MISMATCH` | Overleaf stored something other than predicted after a write | Stop editing that project, re-read, tell the user to report it |

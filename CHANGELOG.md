@@ -4,6 +4,18 @@ All notable changes to `overleaf-mcp-rt`. The format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Added
+
+- **Projects on Overleaf's newer document format (history-OT) can be read, and — opt-in — edited.** Overleaf is migrating projects (`otMigrationStage` > 0) from the ShareJS text type to the operation format of its history system; until now such a project's documents could not be opened at all ("client does not support history-ot"). The engine now detects the format per document, declares support when joining, converts edits to and from text operations at the socket, and predicts the server's handling of an in-flight edit with a port of Overleaf's own algorithm for that format — so live co-editing, `<external-changes>`, write guards and everything else behave as on classic projects. **Writes to such documents are off by default** (`HISTORY_OT_WRITES_DISABLED`, nothing sent; enable with `OVERLEAF_HISTORY_OT_WRITES=1`): a write the server rejects disconnects everyone in the document, and the format could only be verified against Community Edition, not overleaf.com. The first write to each such document is checked against a fresh server snapshot; a difference raises `HISTORY_OT_MISMATCH` and stops further writes for the session. `overleaf_add_comment` refuses on such documents (`COMMENTS_UNSUPPORTED`, before creating a thread): anchoring uses a different operation that could not be verified. Verified live against Community Edition 6.0.1 and 6.3.0 with a project switched to the format; no migrated project on overleaf.com was available to test against.
+
+### Fixed
+
+- Nothing user-visible, but worth recording: the randomized co-editing test that guards the core "never desync a human" fix used a one-line LCG whose low bits are stuck at zero in JavaScript, so it generated almost no collaborator edits. It now uses a proper PRNG and asserts that its scenario really contains races; the engine passes unchanged. The same check caught that the classic and history-OT transforms disagree on some overlaps, which is why history-OT got its own.
+
+### Testing
+
+- The live suite runs every scenario against both protocols on releases that have history-OT (the matrix switches a project in the throw-away instance's Mongo), and gained a scenario where two clients fire overlapping replacements at the same version and must converge.
+
 ## [2.1.0] — 2026-09-20
 
 Installable in Codex, verified against real servers, and five bugs fewer. The new live test suite runs the built server against throw-away Overleaf Community Edition instances (4.2, 5.5, 6.0, 6.3) and against overleaf.com; everything under *Fixed* below marked as found by it was invisible to the unit tests.

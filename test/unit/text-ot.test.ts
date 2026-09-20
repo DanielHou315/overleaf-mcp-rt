@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { prng } from './prng.js'
 import { applyOps, transformOps } from '../../src/overleaf/text-ot.js'
 import type { OtOp } from '../../src/overleaf/diff.js'
 
@@ -31,11 +32,7 @@ describe('transformOps (port of ShareJS text type)', () => {
   })
 
   it('converges for random concurrent ops (TP1)', () => {
-    let seed = 7
-    const rand = (n: number) => {
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff
-      return seed % n
-    }
+    const rand = prng(7)
     const randomOp = (text: string): OtOp[] => {
       const ops: OtOp[] = []
       let cur = text

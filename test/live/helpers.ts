@@ -29,7 +29,20 @@ export const isBootstrap = Boolean(LIVE_URL)
 const EMAIL = process.env.LIVE_EMAIL ?? 'agent@olmcp-live.test'
 const PASSWORD = process.env.LIVE_PASSWORD ?? 'Throwaway-instance-0nly!'
 
+/**
+ * Which OT protocol the project's docs speak. On a throw-away instance the suite
+ * keeps one project of each kind; run-matrix.sh switches the second one to
+ * history-ot (in Mongo, before anything opens it) between the bootstrap phase
+ * and the main run.
+ */
+export type ProjectKind = 'sharejs-text-ot' | 'history-ot'
+export const PROJECT_NAMES: Record<ProjectKind, string> = {
+  'sharejs-text-ot': 'live-sharejs-text-ot',
+  'history-ot': 'live-history-ot',
+}
+
 export interface Target {
+  kind: ProjectKind | 'as-configured'
   url: string
   sessionCookie: string
   csrfToken: string
@@ -84,10 +97,17 @@ async function registerFirstAdmin(url: string): Promise<void> {
   }
 }
 
-let cached: Promise<Target> | undefined
+const cached = new Map<string, Promise<Target>>()
 
-export function acquireTarget(): Promise<Target> {
-  cached ??= (async () => {
+export function acquireTarget(kind: ProjectKind = 'sharejs-text-ot'): Promise<Target> {
+  const key = isBootstrap ? kind : 'as-configured'
+  let target = cached.get(key)
+  if (!target) cached.set(key, target = acquire(kind))
+  return target
+}
+
+async function acquire(kind: ProjectKind): Promise<Target> {
+  {
     const stamp = Date.now().toString(36)
     const scratch = `mcp-live-${stamp}`
     if (isBootstrap) {
@@ -96,10 +116,15 @@ export function acquireTarget(): Promise<Target> {
       await registerFirstAdmin(url)
       const id = await passportLogin({ url, email: EMAIL, password: PASSWORD, extraHeaders: {} })
       const http = new OverleafHttp({ url, sessionCookie: id.sessionCookie, csrfToken: id.csrfToken, extraHeaders: {} })
-      const created = await http.postJson('/project/new', { projectName: `live-${stamp}`, template: 'example' })
-      if (!created.ok) throw new Error(`POST /project/new returned ${created.status}`)
-      const { project_id: projectId } = (await created.json()) as { project_id: string }
-      return { url, ...id, extraHeaders: {}, stickyCookies: '', projectId, scratch }
+      // Find-or-create by name, so the bootstrap phase and the main run agree on the project.
+      const name = PROJECT_NAMES[kind]
+      let projectId = (await new OverleafRest(http).listProjects()).find((p) => p.name === name)?.id
+      if (!projectId) {
+        const created = await http.postJson('/project/new', { projectName: name, template: 'example' })
+        if (!created.ok) throw new Error(`POST /project/new returned ${created.status}`)
+        projectId = ((await created.json()) as { project_id: string }).project_id
+      }
+      return { kind, url, ...id, extraHeaders: {}, stickyCookies: '', projectId, scratch }
     }
     const cfg = loadConfig({ host: LIVE_HOST! })
     const csrfToken = await validateCookie(cfg)
@@ -110,9 +135,8 @@ export function acquireTarget(): Promise<Target> {
     if (!wanted) throw new Error('LIVE_HOST needs LIVE_PROJECT=<name of a scratch project on that host>')
     const project = (await new OverleafRest(http).listProjects()).find((p) => p.name === wanted)
     if (!project) throw new Error(`no project named "${wanted}" on ${cfg.url}: set LIVE_PROJECT to a scratch project`)
-    return { url: cfg.url, sessionCookie: cfg.sessionCookie, csrfToken, extraHeaders: cfg.extraHeaders, stickyCookies, projectId: project.id, scratch }
-  })()
-  return cached
+    return { kind: 'as-configured', url: cfg.url, sessionCookie: cfg.sessionCookie, csrfToken, extraHeaders: cfg.extraHeaders, stickyCookies, projectId: project.id, scratch }
+  }
 }
 
 export interface ToolResult {
@@ -129,7 +153,7 @@ export interface Agent {
 }
 
 /** The shipped artifact, black box: `node dist/cli.js` over stdio, exactly as an MCP client runs it. */
-export async function startAgent(target: Target): Promise<Agent> {
+export async function startAgent(target: Target, opts: { historyOtWrites?: boolean } = {}): Promise<Agent> {
   const client = new Client({ name: 'live-suite', version: '0' }, { capabilities: {} })
   await client.connect(new StdioClientTransport({
     command: process.execPath,
@@ -141,6 +165,8 @@ export async function startAgent(target: Target): Promise<Agent> {
       OVERLEAF_SESSION_COOKIE: target.sessionCookie,
       OVERLEAF_EXTRA_HEADERS: JSON.stringify(target.extraHeaders),
       OVERLEAF_CREDENTIALS_FILE: join(root, 'test', 'live', '.no-credentials-file'),
+      // history-ot docs are read-only unless the user opts in; the suite is that user.
+      OVERLEAF_HISTORY_OT_WRITES: opts.historyOtWrites === false ? '0' : '1',
     },
     stderr: 'inherit',
   }))
@@ -175,7 +201,7 @@ export interface Human {
 export async function joinAsHuman(target: Target): Promise<Human> {
   const cookie = target.stickyCookies ? `${target.sessionCookie}; ${target.stickyCookies}` : target.sessionCookie
   const socket = new OverleafSocket({ url: target.url, projectId: target.projectId, sessionCookie: cookie, extraHeaders: target.extraHeaders })
-  const human: Human = { engine: new OtEngine({ socket, projectId: target.projectId }), otErrors: [], disconnects: 0, close: () => human.engine.disconnect() }
+  const human: Human = { engine: new OtEngine({ socket, projectId: target.projectId, historyOtWrites: true }), otErrors: [], disconnects: 0, close: () => human.engine.disconnect() }
   socket.on('otUpdateError', (...args) => human.otErrors.push(args))
   socket.on('disconnect', () => { human.disconnects += 1 })
   await human.engine.connect()

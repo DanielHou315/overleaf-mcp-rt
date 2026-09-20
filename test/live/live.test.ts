@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { acquireTarget, startAgent, joinAsHuman, freshRead, sleep, liveEnabled, isBootstrap, type Agent, type Target } from './helpers.js'
+import { prng } from '../unit/prng.js'
+import { acquireTarget, startAgent, joinAsHuman, freshRead, sleep, liveEnabled, isBootstrap, type Agent, type ProjectKind, type Target } from './helpers.js'
 
 /**
  * The live suite: the built server (`dist/cli.js`, over stdio) against a real
@@ -12,14 +13,25 @@ import { acquireTarget, startAgent, joinAsHuman, freshRead, sleep, liveEnabled, 
 const PACE_MS = isBootstrap ? 0 : 400
 const pace = () => (PACE_MS ? sleep(PACE_MS) : Promise.resolve())
 
-describe.skipIf(!liveEnabled)(`live Overleaf${process.env.LIVE_EXPECT_VERSION ? ` CE ${process.env.LIVE_EXPECT_VERSION}` : ''}`, () => {
+/**
+ * On a throw-away instance the whole suite runs twice: against a project on the
+ * classic ShareJS protocol, and — where the server has it (LIVE_HISTORY_OT=1, set
+ * by run-matrix.sh from versions.conf) — against one switched to history-ot.
+ * On a configured host it runs once, against whatever the named project speaks.
+ */
+const kinds: ProjectKind[] = isBootstrap && process.env.LIVE_HISTORY_OT === '1'
+  ? ['sharejs-text-ot', 'history-ot']
+  : ['sharejs-text-ot']
+const version = process.env.LIVE_EXPECT_VERSION ? ` CE ${process.env.LIVE_EXPECT_VERSION}` : ''
+
+describe.skipIf(!liveEnabled || process.env.LIVE_PHASE === 'bootstrap').each(kinds)(`live Overleaf${version} — %s project`, (kind) => {
   let target: Target
   let agent: Agent
   let projectId: string
   let dir: string
 
   beforeAll(async () => {
-    target = await acquireTarget()
+    target = await acquireTarget(kind)
     projectId = target.projectId
     dir = target.scratch
     agent = await startAgent(target)
@@ -150,7 +162,9 @@ describe.skipIf(!liveEnabled)(`live Overleaf${process.env.LIVE_EXPECT_VERSION ? 
     const human = await joinAsHuman(target)
     try {
       const { id: docId } = await human.engine.waitForPath(path, 5000)
-      await human.engine.openDoc(docId)
+      const opened = await human.engine.openDoc(docId)
+      // Make sure the run exercises the protocol it claims to.
+      if (isBootstrap) expect(opened.otType).toBe(kind)
 
       const typed = 'the quick brown fox jumps over the lazy dog'
       const typing = (async () => {
@@ -191,6 +205,67 @@ describe.skipIf(!liveEnabled)(`live Overleaf${process.env.LIVE_EXPECT_VERSION ? 
     }
   }, 180_000)
 
+  it('two clients firing overlapping edits at the same version end up identical (the server\'s transform is predicted exactly)', async () => {
+    // Each side has to predict how the server transforms its in-flight op against the other's.
+    // The two OT protocols use different algorithms that disagree on some overlaps, so this runs
+    // the awkward cases on purpose: replacements of overlapping ranges, inserts inside them.
+    const words = Array.from({ length: 12 }, (_, i) => `word${i}`)
+    const path = await newDoc('race.tex', words.join(' ') + '\n')
+    const a = await joinAsHuman(target)
+    const b = await joinAsHuman(target)
+    try {
+      const { id: docId } = await a.engine.waitForPath(path, 5000)
+      await a.engine.openDoc(docId)
+      await b.engine.openDoc(docId)
+      const rand = prng(20260920)
+      const rounds = isBootstrap ? 40 : 10
+      for (let round = 0; round < rounds; round++) {
+        // Both pick a span around the same spot in the text they currently see, and replace it.
+        const edit = (tag: string) => (text: string): string => {
+          const at = Math.min(text.length - 1, 5 + rand(Math.max(1, text.length - 10)))
+          const from = Math.max(0, at - rand(4))
+          const to = Math.min(text.length - 1, at + rand(4))
+          return text.slice(0, from) + (rand(3) === 0 ? '' : `<${tag}${round}>`) + text.slice(to)
+        }
+        await Promise.all([a.engine.updateDoc(docId, edit('A')), b.engine.updateDoc(docId, edit('B'))])
+        await pace()
+      }
+      await sleep(1500)
+      const stored = await freshRead(target, path)
+      expect(a.engine.readDoc(docId)).toBe(stored)
+      expect(b.engine.readDoc(docId)).toBe(stored)
+
+      // Random overlaps rarely hit the one case where the two protocols' algorithms disagree —
+      // an insert landing inside text the other side *replaced* — and a wrong prediction there
+      // keeps the length right, so nothing else would notice. Build it on purpose. Only the
+      // client whose op reaches the server second has to predict, and which one that is isn't
+      // ours to choose, so swap roles and firing order every round.
+      const corners = isBootstrap ? 24 : 8
+      for (let round = 0; round < corners; round++) {
+        const marker = `[${round}:lorem ipsum]`
+        await a.engine.updateDoc(docId, (t) => `${marker}\n${t}`)
+        await sleep(isBootstrap ? 120 : 600) // let the marker reach the other side before racing
+        const [replacer, inserter] = round % 2 === 0 ? [a, b] : [b, a]
+        const replace = () => replacer.engine.updateDoc(docId, (t) => t.replace(`${round}:lorem ipsum`, `${round}:lorem ipXYm`))
+        const insert = () => inserter.engine.updateDoc(docId, (t) => t.replace(`${round}:lorem ipsum`, `${round}:lorem ipsAum`))
+        await Promise.all(round % 4 < 2 ? [replace(), insert()] : [insert(), replace()])
+        await sleep(isBootstrap ? 150 : 600)
+        // Compare right away: a later rejoin would paper over a wrong prediction.
+        const viewA = a.engine.readDoc(docId)
+        const viewB = b.engine.readDoc(docId)
+        const truth = await freshRead(target, path)
+        expect(viewA, `round ${round}, client A`).toBe(truth)
+        expect(viewB, `round ${round}, client B`).toBe(truth)
+      }
+
+      expect(a.otErrors.concat(b.otErrors)).toEqual([])
+      expect(a.disconnects + b.disconnects).toBe(0)
+    } finally {
+      a.close()
+      b.close()
+    }
+  }, 300_000)
+
   it('refuses to overwrite text the agent has not seen, unless told to', async () => {
     const path = await newDoc('guard.tex', 'first line\n')
     const human = await joinAsHuman(target)
@@ -215,6 +290,24 @@ describe.skipIf(!liveEnabled)(`live Overleaf${process.env.LIVE_EXPECT_VERSION ? 
       expect(human.disconnects).toBe(0)
     } finally {
       human.close()
+    }
+  }, 120_000)
+
+  it.skipIf(kind !== 'history-ot')('as shipped (no opt-in) a history-ot doc can be read but not written', async () => {
+    const path = await newDoc('readonly.tex', 'left alone\n')
+    const cautious = await startAgent(target, { historyOtWrites: false })
+    try {
+      const read = await cautious.call('overleaf_read_doc', { projectId, path })
+      expect(read.json.content).toBe('left alone\n')
+      const edit = await cautious.call('overleaf_edit_doc', { projectId, path, edits: [{ old_string: 'left alone', new_string: 'changed' }] })
+      expect(edit.ok).toBe(false)
+      expect(edit.json.code).toBe('HISTORY_OT_WRITES_DISABLED')
+      expect(edit.json.hint).toContain('OVERLEAF_HISTORY_OT_WRITES=1')
+      const write = await cautious.call('overleaf_write_doc', { projectId, path, content: 'changed\n', overwrite: true })
+      expect(write.json.code).toBe('HISTORY_OT_WRITES_DISABLED')
+      expect(await freshRead(target, path)).toBe('left alone\n')
+    } finally {
+      await cautious.close()
     }
   }, 120_000)
 

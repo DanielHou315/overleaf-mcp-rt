@@ -39,7 +39,7 @@ describe('OtEngine.joinDoc', () => {
     expect(baseline.docId).toBe('d1')
     expect(baseline.version).toBe(7)
     expect(baseline.text).toBe('\\section{α}\nHello.\n')
-    expect(sock.emitsOf('joinDoc')[0]!.args).toEqual(['d1', { encodeRanges: true }])
+    expect(sock.emitsOf('joinDoc')[0]!.args).toEqual(['d1', { encodeRanges: true, supportsHistoryOT: true }])
   })
 
   it('caches; second joinDoc returns the same baseline without re-emitting', async () => {

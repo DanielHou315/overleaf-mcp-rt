@@ -4,12 +4,17 @@ import { applyOps, transformOps } from '../../src/overleaf/text-ot.js'
 import type { ServerContext } from '../../src/mcp/server.js'
 import type { JoinProjectResponse } from '../../src/overleaf/ot.types.js'
 import { FakeSocket } from './fake-socket.js'
+import { TextOp } from './text-operation-oracle.js'
 
 interface ServerDoc {
   text: string
   version: number
   /** Ops by the version they were applied at, for transforming stale submissions. */
   history: Map<number, OtOp[]>
+  /** history-ot mode: the same, as text operations. */
+  textOps: Map<number, TextOp>
+  /** history-ot mode: the text at each version, so a collaborator can submit against an old one. */
+  textAt: Map<number, string>
 }
 
 /**
@@ -31,15 +36,39 @@ export class FakeOverleaf {
       startVersion?: number
       /** Comment ranges returned by joinDoc, per doc id. */
       ranges?: Record<string, { comments: Array<{ id: string; op: { c: string; p: number; t: string } }> }>
+      /**
+       * Behave like a project with otMigrationStage > 0: joinDoc needs supportsHistoryOT and
+       * returns a raw StringFileData; updates carry one text operation and are transformed with
+       * the editor-core algorithm (text-operation-oracle.ts), not with the ShareJS one.
+       */
+      historyOt?: boolean
+      /**
+       * history-ot: stamp broadcasts and acks with the version the op was applied at. The real
+       * document-updater (6.0 – 6.3) does NOT: it leaves the version the sender submitted at, which
+       * is what this fake does by default. `true` models a server that fixes that.
+       */
+      restampVersions?: boolean
+      /** history-ot: acknowledge agent ops but store a (same-length) variation — a server that disagrees with our model. */
+      storesDifferently?: boolean
+      /** history-ot: comments in the snapshot, per doc id. */
+      historyOtComments?: Record<string, Array<{ id: string; ranges: Array<{ pos: number; length: number }> }>>
     } = {},
   ) {
     for (const [docId, text] of Object.entries(docs)) {
-      this.docs.set(docId, { text, version: opts.startVersion ?? 1, history: new Map() })
+      this.docs.set(docId, { text, version: opts.startVersion ?? 1, history: new Map(), textOps: new Map(), textAt: new Map() })
     }
     this.sock.autoConfirmWrites = false
-    this.sock.respondToEmit('joinDoc', (docId) => {
+    this.sock.respondToEmit('joinDoc', (docId, options) => {
       const doc = this.docs.get(docId as string)
       if (!doc) return [{ message: 'not found' }]
+      if (this.opts.historyOt) {
+        // WebsocketController.joinDoc
+        if (!(options as { supportsHistoryOT?: boolean } | undefined)?.supportsHistoryOT) {
+          return [{ message: 'client does not support history-ot' }]
+        }
+        const raw = { content: doc.text, comments: this.opts.historyOtComments?.[docId as string] }
+        return [null, raw, doc.version, [], {}, 'history-ot']
+      }
       // Overleaf ships lines as latin1-packed UTF-8.
       const lines = doc.text.split('\n').map((l) => Buffer.from(l, 'utf-8').toString('latin1'))
       return [null, lines, doc.version, [], this.opts.ranges?.[docId as string] ?? {}]
@@ -87,6 +116,7 @@ export class FakeOverleaf {
 
   private applyAgentOp(docId: string, update: { op: OtOp[]; v: number }): void {
     const doc = this.docs.get(docId)!
+    if (this.opts.historyOt) return this.applyAgentTextOperation(docId, update as unknown as { op: unknown[]; v: number })
     // UpdateManager._sanitizeUpdate: surrogates in inserts become U+FFFD; the sender is not told.
     let op = update.op.map((c) => (c.i === undefined ? c : { ...c, i: c.i.replace(/[\uD800-\uDFFF]/g, '\uFFFD') }))
     try {
@@ -100,6 +130,77 @@ export class FakeOverleaf {
     doc.history.set(doc.version, op)
     const v = doc.version++
     this.sock.simulate('otUpdateApplied', { doc: docId, v })
+  }
+
+  /** HistoryOTUpdateManager.tryApplyUpdate. */
+  private applyAgentTextOperation(docId: string, update: { op: unknown[]; v: number }): void {
+    const doc = this.docs.get(docId)!
+    try {
+      const raw = update.op[0] as { textOperation?: unknown[] }
+      if (update.op.length !== 1 || !Array.isArray(raw?.textOperation)) throw new Error('unsupported update for history-ot')
+      let op = TextOp.fromJSON(raw as { textOperation: unknown[] })
+      if (update.v > doc.version) throw new Error('Op at future version')
+      for (let v = update.v; v < doc.version; v++) op = TextOp.transform(op, doc.textOps.get(v)!)[0]
+      doc.textAt.set(doc.version, doc.text)
+      doc.text = op.apply(doc.text)
+      if (this.opts.storesDifferently) doc.text = doc.text.split('').reverse().join('')
+      doc.textOps.set(doc.version, op)
+    } catch (err) {
+      this.sock.simulate('otUpdateError', String((err as Error).message), { doc_id: docId })
+      return
+    }
+    const appliedAt = doc.version++
+    // tryApplyUpdate never touches update.v: the sender hears back the version it submitted at.
+    this.sock.simulate('otUpdateApplied', { doc: docId, v: this.opts.restampVersions ? appliedAt : update.v })
+  }
+
+  /**
+   * history-ot: a collaborator replaces `del` characters at `pos` with `ins`.
+   * `basedOn` is the version their editor was at when they typed (default: current);
+   * an older one is transformed forward like the real server does — and, like the
+   * real server, broadcast still stamped with `basedOn`.
+   */
+  remoteSplice(
+    docId: string, pos: number, del: number, ins: string,
+    opts: { broadcast?: boolean; basedOn?: number } = {},
+  ): void {
+    const doc = this.docs.get(docId)!
+    const basedOn = opts.basedOn ?? doc.version
+    const base = basedOn === doc.version ? doc.text : doc.textAt.get(basedOn)!
+    let op = TextOp.splice(base.length, Math.min(pos, base.length), Math.min(del, base.length - Math.min(pos, base.length)), ins)
+    for (let v = basedOn; v < doc.version; v++) op = TextOp.transform(op, doc.textOps.get(v)!)[0]
+    doc.textAt.set(doc.version, doc.text)
+    doc.text = op.apply(doc.text)
+    doc.textOps.set(doc.version, op)
+    const appliedAt = doc.version++
+    if (opts.broadcast === false) return
+    this.sock.simulate('otUpdateApplied', {
+      doc: docId, op: [op.toJSON()], v: this.opts.restampVersions ? appliedAt : basedOn,
+      meta: { source: 'pub-HUMAN', user_id: 'u-human', ts: Date.now() },
+    })
+  }
+
+  /**
+   * history-ot: a collaborator's client sends this exact text operation. The server parses it
+   * (which reorders an insert before an adjacent remove) but, unless it had to transform it,
+   * broadcasts the JSON it was given — so other clients see the sender's own component order.
+   */
+  remoteTextOperation(docId: string, raw: { textOperation: Array<number | string> }): void {
+    const doc = this.docs.get(docId)!
+    const op = TextOp.fromJSON(raw)
+    doc.textAt.set(doc.version, doc.text)
+    doc.text = op.apply(doc.text)
+    doc.textOps.set(doc.version, op)
+    const v = doc.version++
+    this.sock.simulate('otUpdateApplied', {
+      doc: docId, op: [raw], v,
+      meta: { source: 'pub-HUMAN', user_id: 'u-human', ts: Date.now() },
+    })
+  }
+
+  /** The version the server is at — what a collaborator's editor would base its next op on. */
+  version(docId: string): number {
+    return this.docs.get(docId)!.version
   }
 
   /** A collaborator edits in the browser; the agent's socket gets the broadcast. */
@@ -120,8 +221,14 @@ export class FakeOverleaf {
   }
 }
 
-export async function connectEngine(server: FakeOverleaf): Promise<OtEngine> {
-  const engine = new OtEngine({ socket: server.sock, projectId: 'p1', writeConfirmTimeoutMs: 200 })
+export async function connectEngine(
+  server: FakeOverleaf,
+  opts: { historyOtWrites?: boolean } = {},
+): Promise<OtEngine> {
+  // Tests exercise history-ot writes unless they are about the opt-in itself.
+  const engine = new OtEngine({
+    socket: server.sock, projectId: 'p1', writeConfirmTimeoutMs: 200, historyOtWrites: opts.historyOtWrites ?? true,
+  })
   const connecting = engine.connect()
   server.sock.simulate('connectionAccepted', null, 'pub-AGENT')
   server.sock.simulate('joinProjectResponse', server.joinResponse())
@@ -133,9 +240,10 @@ export async function connectEngine(server: FakeOverleaf): Promise<OtEngine> {
 export async function makeToolHarness(
   docs: Record<string, string>,
   opts: ConstructorParameters<typeof FakeOverleaf>[1] = {},
+  engineOpts: Parameters<typeof connectEngine>[1] = {},
 ) {
   const server = new FakeOverleaf(docs, opts)
-  const engine = await connectEngine(server)
+  const engine = await connectEngine(server, engineOpts)
   const ot = {
     get: async () => engine,
     peek: () => engine,

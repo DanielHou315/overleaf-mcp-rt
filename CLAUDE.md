@@ -47,6 +47,7 @@ src/mcp/tools/              Tool schemas + dispatcher (index.ts) and handlers
 src/overleaf/ot.ts          OtEngine: live snapshot per doc, in-flight transform, confirmation,
                             external-change tracking, comment anchors, reconnect
 src/overleaf/text-ot.ts     Port of the server's ShareJS text type (apply + transform)
+src/overleaf/history-ot.ts  Overleaf's newer doc type: wire codec + port of editor-core's TextOperation transform
 src/overleaf/socket.ts      Socket.IO 0.9 client wrapper (Overleaf's fork, patched for extraHeaders)
 src/overleaf/rest.ts, http.ts, auth.ts   REST client, cookie validation, LB stickiness cookie
 src/overleaf/browser-login.ts            login --browser via the DevTools protocol
@@ -63,6 +64,11 @@ Protocol facts worth knowing before touching `ot.ts` (all verified against the O
 - Remote ops arrive as `otUpdateApplied` with `op`; `v` is the version the op was applied *at*.
 - The server transforms a stale-version op with `transform(op, other, 'left')`; `text-ot.ts` must stay byte-compatible with that.
 - `joinDoc` RPCs must not overlap on one socket, and updates can arrive before the join response.
+- A doc is either `sharejs-text-ot` or `history-ot` (projects with `otMigrationStage` > 0); the engine learns which from the joinDoc snapshot and must send `supportsHistoryOT: true` to get one at all. It keeps text and ops in ShareJS components for both and converts at the socket (`history-ot.ts`).
+- The two types use **different transform algorithms that disagree on some overlaps** (our insert inside a range someone replaced). The in-flight op must be predicted with the algorithm of the doc's type: `text-ot.ts` for ShareJS, `TextOperation.transform` for history-ot. `history-ot.test.ts` pins the counter-example.
+- For history-ot docs document-updater (6.0 – 6.3) does **not** restamp a transformed update: broadcasts and acks carry the version the sender *submitted* at, not the one it was applied at. The engine therefore sequences history-ot updates by arrival order (`inSequence` in `ot.ts`), relies on the text operation's length check to turn a missed update into a rejoin, and re-joins when an update crossing a join can't be placed.
+- history-ot **writes are opt-in** (`OVERLEAF_HISTORY_OT_WRITES=1` → `historyOtWrites`), because the format is unverified on overleaf.com and a rejected op disconnects everyone in the doc; the first write per doc is verified against a fresh snapshot (`HISTORY_OT_MISMATCH` stops further writes). Flip the default only after a verified run on a migrated overleaf.com project.
+- Randomized tests must use `test/unit/prng.ts` and assert that the scenario they generate contains what they claim (stale ops, races): a one-line LCG overflows double precision in JavaScript and once left the core interleaving test almost empty.
 - The authoritative reference is the running server's own source: `docker exec <container> ls /overleaf/services/{real-time,document-updater,web}`.
 
 ## Tech stack
@@ -81,7 +87,7 @@ npm run typecheck && npm test && npm run build
 - The real-browser login test launches a headless browser locally and is skipped on CI.
 - Live checks against a real instance: `npm run build`, then `node scripts/agent-session.mjs` (a long-lived MCP client you drive with `curl`) while editing in a browser; `scripts/latency-probe.mjs` times agent edits; `scripts/smoke-stdio.mjs` checks the bundle starts. Use a scratch file, keep edit rates humane on overleaf.com, and clean up.
 - Plugin changes: validate and install from the checkout as described in README → Developing.
-- **Live suite** (`test/live/`, not part of `npm test` or CI): `test/live/run-matrix.sh [versions…]` on a Docker host starts a throw-away CE per version in `versions.conf`, runs `live.test.ts` against it from inside its network, greps the server's own logs for OT errors, and removes everything. `LIVE_HOST=<name> npm run test:live` points the same suite at a configured host such as overleaf.com (scratch folder in a scratch project, paced, cleaned up). Run the matrix for changes to `src/overleaf/` and before a release; add new Overleaf releases to `versions.conf`.
+- **Live suite** (`test/live/`, not part of `npm test` or CI): `test/live/run-matrix.sh [versions…]` on a Docker host starts a throw-away CE per version in `versions.conf`, runs `live.test.ts` against it from inside its network, greps the server's own logs for OT errors, and removes everything. On releases that have it (`history-ot` column of `versions.conf`) the suite runs twice — once against a project the script switches to history-ot in the instance's Mongo between a bootstrap phase and the main run. `LIVE_HOST=<name> npm run test:live` points the same suite at a configured host such as overleaf.com (scratch folder in a scratch project, paced, cleaned up). Run the matrix for changes to `src/overleaf/` and before a release; add new Overleaf releases to `versions.conf`.
 - The matrix may share a machine with a production Overleaf. Its isolation rules are not negotiable and `test/unit/live-matrix.test.ts` enforces them: **no published ports, an `internal` network, no fixed container names, nothing built, no `docker … prune`, remove only what the run created** (including only the images it pulled).
 
 ## Workflow conventions

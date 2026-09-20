@@ -13,6 +13,7 @@ The unit tests run the engine against a protocol-faithful fake. This directory c
 | String edits read back byte-for-byte by a fresh connection, with accents, CJK and symbols | OT position maths, the server's latin1-packed UTF-8, the whitespace-tolerant matcher |
 | Emoji: stored as U+FFFD (Overleaf's rule), the agent is told, and a delete across them is accepted while a bystander stays connected | the server silently rewriting what we sent — this suite's first catch |
 | **Agent edits while a second client types in the same doc — including the same line** | the bug this project exists to avoid: an op the server rejects disconnects *everyone* on the doc. Asserts no `otUpdateError`, no disconnect, all three views identical, nothing lost, and that the agent was shown `<external-changes>` |
+| Two clients fire overlapping replacements at the same version and must end identical; then the one overlap where the two protocols' algorithms disagree (an insert inside text the other side replaced) is built on purpose, 24 times, swapping roles and firing order, comparing all three views after every round | predicting the server's transform of an in-flight op with the wrong algorithm. Negative-controlled: with the ShareJS transform forced onto history-OT docs this scenario fails on a real server (`ipAXYm` vs the server's `ipXYAm`); random overlaps alone did not catch it |
 | `overleaf_write_doc` refuses to clobber unseen text, `overwrite: true` forces it | external-change tracking against real broadcasts |
 | Binary upload and read-back | upload route / file-store differences |
 | Compile, log, PDF | compile API and output-file URL changes |
@@ -31,6 +32,8 @@ KEEP_IMAGES=1 test/live/run-matrix.sh    # keep pulled images for the next run
 ```
 
 Run it **on the Docker host**, from a checkout (it mounts the checkout read-only). Needs Docker with Compose v2; nothing else — Node runs in a container. On a remote machine: `ssh <host> 'cd <checkout> && git pull && test/live/run-matrix.sh'`. Expect about five minutes per version, mostly image pull and Overleaf's first boot, and 2–3 GB of image per version while it runs.
+
+**Both OT protocols.** Where the release has Overleaf's newer document format (`history-ot` column in `versions.conf`), every scenario runs twice: against a classic project, and against one switched to history-ot. CE has no route for that switch and a project can only change protocol while none of its docs is loaded, so the script runs a bootstrap phase that only creates the projects, sets `overleaf.history.otMigrationStage` in the instance's own Mongo, and then runs the suite. The co-editing scenario asserts which protocol the doc actually speaks, so a run can't pass on the wrong one.
 
 For each version it starts Overleaf + Mongo + Redis (failing within seconds, with the instance's own output, if that version refuses the configuration), registers the first admin through the launchpad, logs in with a password, creates a project, runs the suite from a container on the same network, and removes everything.
 

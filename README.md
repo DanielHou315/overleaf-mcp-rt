@@ -58,7 +58,7 @@ npx overleaf-mcp-rt@latest --help
 | Login | `--browser`, email + password, or cookie | same | `--browser` or cookie ³ |
 | Behind an auth proxy (Cloudflare Access, Basic Auth, …) | ✅ extra headers | ✅ extra headers | n/a |
 
-¹ Except projects Overleaf has already migrated to its new *history-OT* format — see the [FAQ](#faq). Those fail cleanly on document reads and writes; nothing is corrupted.<br>
+¹ Projects Overleaf has migrated to its newer *history-OT* document format can be read (since 2.2.0); editing them is opt-in until it has been verified on overleaf.com — see the [FAQ](#faq).<br>
 ² Stock CE has no review panel, so the comment tools return `COMMENTS_UNSUPPORTED` without changing anything.<br>
 ³ overleaf.com's password form is CAPTCHA-protected, so email + password login can't work there.<br>
 ⁴ Server Pro shares CE's real-time and document services and the same review-panel API as overleaf.com, but has not been tested separately — reports welcome.
@@ -313,6 +313,8 @@ Every tool error serializes as JSON inside an MCP `text` content block (with `is
 | `DOC_CHANGED_EXTERNALLY` | A collaborator edited the doc after the agent last saw it, and the requested operation (`overleaf_write_doc`, `replace_lines`, `raw_ops`) depends on that stale view. Nothing was written. |
 | `DOC_NOT_READ` | `overleaf_write_doc` on a non-empty doc the agent never read. |
 | `COMMENTS_UNSUPPORTED` | The instance has no comment threads (stock Community Edition). Nothing was changed. |
+| `HISTORY_OT_WRITES_DISABLED` | The project uses Overleaf's newer document format; reading works, writing needs `OVERLEAF_HISTORY_OT_WRITES=1` (see FAQ). Nothing was sent. |
+| `HISTORY_OT_MISMATCH` | After a write to such a document, Overleaf's copy differed from what was predicted. Further history-OT writes are refused for the session; please report it. |
 | `INVALID_CONFIG` | Missing or malformed `OVERLEAF_URL` / cookie / extra headers. |
 
 `retryable: true` is set for transient failures (`NETWORK_ERROR`); agents can use it to drive a retry loop. `hint` provides a one-line next step for the most common failures.
@@ -356,7 +358,7 @@ Yes, for projects on Overleaf's classic OT pipeline. Verified live against produ
 
 - **Log in with `login --url https://www.overleaf.com --name overleaf.com --browser`** — the password form is CAPTCHA-protected, so email/password login can't work there. Pasting a cookie also works; if devtools shows two `overleaf_session2` cookies, use the one for the `.overleaf.com` domain — `login` validates whatever you paste before saving it.
 - The server fetches overleaf.com's load-balancer stickiness cookie (`GCLB`) automatically so the Socket.IO handshake and websocket reach the same backend.
-- **history-OT projects are not supported yet.** Overleaf is migrating projects to a new OT format (`otMigrationStage` > 0). For those, overleaf.com refuses `joinDoc` from clients that don't speak it, so doc reads/writes fail with a clear error (nothing is corrupted); REST-backed tools (`list_projects`, `compile`, `download_pdf`, tree operations) still work. You can check a project by looking for `<meta name="ol-otMigrationStage">` on its editor page.
+- **Projects on Overleaf's newer document format (history-OT): reading works, editing is opt-in** (since 2.2.0). Overleaf is migrating projects (`otMigrationStage` > 0, visible as `<meta name="ol-otMigrationStage">` on the editor page) from the ShareJS text type to the operation format of its history system; before 2.2.0 such a project's documents could not be opened at all. The server detects the format per document and speaks it natively — reads, `<external-changes>` and following collaborators live always work. **Writes are off by default** and fail with `HISTORY_OT_WRITES_DISABLED` (nothing sent): the format is verified against Community Edition 6.0 and 6.3, including concurrent editing, but no migrated project on overleaf.com was available to verify against, and a write the server rejects would disconnect everyone in that document. To enable, start the MCP server with **`OVERLEAF_HISTORY_OT_WRITES=1`** — try a scratch file first, ideally with nobody else in it. As a safety net the first write to each such document is compared with a fresh snapshot from the server; if they differ the tool reports `HISTORY_OT_MISMATCH` and refuses further writes for the session instead of drifting silently. `overleaf_add_comment` is not supported on these documents yet. If you try it on overleaf.com, please open an issue with the result either way.
 - You are automating your own account on a shared production service: keep edit rates humane. This project is not affiliated with Overleaf.
 
 **Does it work behind a reverse proxy?**
