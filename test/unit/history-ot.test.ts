@@ -235,7 +235,8 @@ describe('OtEngine on a history-ot doc', () => {
     server.holdAgentOps = true
     const write = engine.updateDoc('d1', (t) => t.replace('su', 'sAu')) // insert between "s" and "u"
     for (let i = 0; i < 50 && server.heldCount === 0; i++) await new Promise((r) => setTimeout(r, 0))
-    server.remoteSplice('d1', 8, 2, 'XY') // a person replaces "su" first
+    // Someone replaces "su" first, from a client that lists the remove before the insert (as this one does).
+    server.remoteTextOperation('d1', { textOperation: [8, -2, 'XY', 1] })
     server.flush()
     await write
     expect(server.text('d1')).toBe('lorem ipXYAm')

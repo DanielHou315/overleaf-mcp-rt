@@ -177,6 +177,24 @@ export class FakeOverleaf {
     })
   }
 
+  /**
+   * history-ot: a collaborator's client sends this exact text operation. The server parses it
+   * (which reorders an insert before an adjacent remove) but, unless it had to transform it,
+   * broadcasts the JSON it was given — so other clients see the sender's own component order.
+   */
+  remoteTextOperation(docId: string, raw: { textOperation: Array<number | string> }): void {
+    const doc = this.docs.get(docId)!
+    const op = TextOp.fromJSON(raw)
+    doc.textAt.set(doc.version, doc.text)
+    doc.text = op.apply(doc.text)
+    doc.textOps.set(doc.version, op)
+    const v = doc.version++
+    this.sock.simulate('otUpdateApplied', {
+      doc: docId, op: [raw], v,
+      meta: { source: 'pub-HUMAN', user_id: 'u-human', ts: Date.now() },
+    })
+  }
+
   /** The version the server is at — what a collaborator's editor would base its next op on. */
   version(docId: string): number {
     return this.docs.get(docId)!.version
