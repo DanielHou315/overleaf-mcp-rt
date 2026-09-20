@@ -293,6 +293,24 @@ describe.skipIf(!liveEnabled || process.env.LIVE_PHASE === 'bootstrap').each(kin
     }
   }, 120_000)
 
+  it.skipIf(kind !== 'history-ot')('as shipped (no opt-in) a history-ot doc can be read but not written', async () => {
+    const path = await newDoc('readonly.tex', 'left alone\n')
+    const cautious = await startAgent(target, { historyOtWrites: false })
+    try {
+      const read = await cautious.call('overleaf_read_doc', { projectId, path })
+      expect(read.json.content).toBe('left alone\n')
+      const edit = await cautious.call('overleaf_edit_doc', { projectId, path, edits: [{ old_string: 'left alone', new_string: 'changed' }] })
+      expect(edit.ok).toBe(false)
+      expect(edit.json.code).toBe('HISTORY_OT_WRITES_DISABLED')
+      expect(edit.json.hint).toContain('OVERLEAF_HISTORY_OT_WRITES=1')
+      const write = await cautious.call('overleaf_write_doc', { projectId, path, content: 'changed\n', overwrite: true })
+      expect(write.json.code).toBe('HISTORY_OT_WRITES_DISABLED')
+      expect(await freshRead(target, path)).toBe('left alone\n')
+    } finally {
+      await cautious.close()
+    }
+  }, 120_000)
+
   it('uploads a binary file and reads it back', async () => {
     // 1×1 transparent PNG
     const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='

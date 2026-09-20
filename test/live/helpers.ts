@@ -153,7 +153,7 @@ export interface Agent {
 }
 
 /** The shipped artifact, black box: `node dist/cli.js` over stdio, exactly as an MCP client runs it. */
-export async function startAgent(target: Target): Promise<Agent> {
+export async function startAgent(target: Target, opts: { historyOtWrites?: boolean } = {}): Promise<Agent> {
   const client = new Client({ name: 'live-suite', version: '0' }, { capabilities: {} })
   await client.connect(new StdioClientTransport({
     command: process.execPath,
@@ -166,7 +166,7 @@ export async function startAgent(target: Target): Promise<Agent> {
       OVERLEAF_EXTRA_HEADERS: JSON.stringify(target.extraHeaders),
       OVERLEAF_CREDENTIALS_FILE: join(root, 'test', 'live', '.no-credentials-file'),
       // history-ot docs are read-only unless the user opts in; the suite is that user.
-      OVERLEAF_HISTORY_OT_WRITES: '1',
+      OVERLEAF_HISTORY_OT_WRITES: opts.historyOtWrites === false ? '0' : '1',
     },
     stderr: 'inherit',
   }))
