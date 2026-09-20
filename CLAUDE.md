@@ -91,7 +91,7 @@ npm run typecheck && npm test && npm run build
 
 `package.json` is the single source of the version: the build injects it into the CLI and MCP handshake, and the four plugin manifests (`.claude-plugin/` and `.cursor-plugin/`, `plugin.json` and `marketplace.json`) must match it — a test enforces that.
 
-1. Release PR: `npm version <x.y.z> --no-git-tag-version`, set the same version in the four plugin manifests, and rename the changelog's `## [Unreleased]` section to `## [x.y.z] — <date>` (leaving a fresh empty `## [Unreleased]` above it).
+1. Release PR: `node scripts/release-prep.mjs <x.y.z>` sets `package.json`, the lockfile and the four plugin manifests, and turns the changelog's `## [Unreleased]` into `## [x.y.z] — <date>` (leaving a fresh empty `## [Unreleased]` above it). Review the section; for a major version, lead with a *Breaking changes — migrating* list.
 2. After it merges: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. The `Release` workflow checks the tag against `package.json`, runs typecheck/tests/build, publishes to npm with provenance, and creates the GitHub release from the changelog section. It needs the `NPM_TOKEN` repository secret.
 
