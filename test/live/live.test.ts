@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { prng } from '../unit/prng.js'
 import { acquireTarget, startAgent, joinAsHuman, freshRead, sleep, liveEnabled, isBootstrap, type Agent, type ProjectKind, type Target } from './helpers.js'
 
 /**
@@ -201,6 +202,43 @@ describe.skipIf(!liveEnabled || process.env.LIVE_PHASE === 'bootstrap').each(kin
       expect(results.some((r) => r.text.includes('<external-changes>'))).toBe(true)
     } finally {
       human.close()
+    }
+  }, 180_000)
+
+  it('two clients firing overlapping edits at the same version end up identical (the server\'s transform is predicted exactly)', async () => {
+    // Each side has to predict how the server transforms its in-flight op against the other's.
+    // The two OT protocols use different algorithms that disagree on some overlaps, so this runs
+    // the awkward cases on purpose: replacements of overlapping ranges, inserts inside them.
+    const words = Array.from({ length: 12 }, (_, i) => `word${i}`)
+    const path = await newDoc('race.tex', words.join(' ') + '\n')
+    const a = await joinAsHuman(target)
+    const b = await joinAsHuman(target)
+    try {
+      const { id: docId } = await a.engine.waitForPath(path, 5000)
+      await a.engine.openDoc(docId)
+      await b.engine.openDoc(docId)
+      const rand = prng(20260920)
+      const rounds = isBootstrap ? 40 : 10
+      for (let round = 0; round < rounds; round++) {
+        // Both pick a span around the same spot in the text they currently see, and replace it.
+        const edit = (tag: string) => (text: string): string => {
+          const at = Math.min(text.length - 1, 5 + rand(Math.max(1, text.length - 10)))
+          const from = Math.max(0, at - rand(4))
+          const to = Math.min(text.length - 1, at + rand(4))
+          return text.slice(0, from) + (rand(3) === 0 ? '' : `<${tag}${round}>`) + text.slice(to)
+        }
+        await Promise.all([a.engine.updateDoc(docId, edit('A')), b.engine.updateDoc(docId, edit('B'))])
+        await pace()
+      }
+      await sleep(1500)
+      const stored = await freshRead(target, path)
+      expect(a.engine.readDoc(docId)).toBe(stored)
+      expect(b.engine.readDoc(docId)).toBe(stored)
+      expect(a.otErrors.concat(b.otErrors)).toEqual([])
+      expect(a.disconnects + b.disconnects).toBe(0)
+    } finally {
+      a.close()
+      b.close()
     }
   }, 180_000)
 
