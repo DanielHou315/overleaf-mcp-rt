@@ -12,7 +12,7 @@ import type {
 import { CommentsUnsupportedError, NetworkError, OverleafError } from '../errors.js'
 import { computeOps, sanitizeOps, type OtOp } from './diff.js'
 import {
-  decodeEditOperations, isAscending, isRawStringFileData, toTextOperation, type OtType,
+  decodeEditOperations, isAscending, isRawStringFileData, toTextOperation, transformInFlight, type OtType,
 } from './history-ot.js'
 import { applyOps as applyTextOps, transformOps } from './text-ot.js'
 import type { UpdateSchema } from './ot.types.js'
@@ -706,13 +706,19 @@ export class OtEngine {
       return
     }
     try {
-      const remoteOps = baseline.otType === 'history-ot'
-        ? decodeEditOperations(update.op as unknown[], baseline.text)
-        : update.op
+      const historyOt = baseline.otType === 'history-ot'
+      const before = baseline.text
+      const remoteOps = historyOt ? decodeEditOperations(update.op as unknown[], before) : update.op
       applyToBaseline(baseline, remoteOps)
       baseline.version += 1
       const inflight = this.inflightWrites.get(docId)
-      if (inflight) inflight.ops = transformOps(inflight.ops, remoteOps, 'left')
+      if (inflight) {
+        // Predict the server's transform of our op with the server's own algorithm for this doc
+        // type: the two differ on some interleavings (see history-ot.ts).
+        inflight.ops = historyOt
+          ? transformInFlight(inflight.ops, update.op as unknown[], before)
+          : transformOps(inflight.ops, remoteOps, 'left')
+      }
     } catch {
       this.dropBaseline(docId)
       return

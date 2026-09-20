@@ -3,7 +3,7 @@ import { OtEngine } from '../../src/overleaf/ot.js'
 import { computeOps, type OtOp } from '../../src/overleaf/diff.js'
 import { applyOps, transformOps } from '../../src/overleaf/text-ot.js'
 import {
-  decodeEditOperations, fromTextOperation, isAscending, toTextOperation,
+  decodeEditOperations, fromTextOperation, isAscending, toTextOperation, transformInFlight,
 } from '../../src/overleaf/history-ot.js'
 import { handleAddComment } from '../../src/mcp/tools/comments.js'
 import { handleEditDoc } from '../../src/mcp/tools/edit.js'
@@ -75,30 +75,51 @@ describe('history-ot codec', () => {
 })
 
 /**
- * The engine predicts what the server does to its in-flight op using the
- * ShareJS transform, while a history-ot server uses editor-core's. They must
- * agree on the resulting *text* for every interleaving, or the snapshot drifts
- * silently and a later delete gets everyone disconnected.
+ * The engine has to predict what the server does to its in-flight op when a
+ * collaborator's op beats it. The prediction must use the algorithm the server
+ * uses for that doc type — they are NOT interchangeable.
  */
-describe('ShareJS transform vs editor-core transform', () => {
-  it('give the same document for 3000 random concurrent edit pairs', () => {
+describe('predicting the server\'s transform of an in-flight op', () => {
+  /** What a history-ot server ends up with: theirs first, ours transformed as operation1. */
+  function onServer(text: string, ours: OtOp[], theirs: OtOp[]): string {
+    const serverTheirs = TextOp.fromJSON(toTextOperation(theirs, text))
+    const serverOurs = TextOp.transform(TextOp.fromJSON(toTextOperation(ours, text)), serverTheirs)[0]
+    return serverOurs.apply(serverTheirs.apply(text))
+  }
+
+  it('ShareJS and editor-core disagree when our insert lands inside text a collaborator replaced', () => {
+    // Found by the random test below once it had a PRNG worth the name.
+    const text = 'lorem ipsum'
+    const ours: OtOp[] = [{ p: 9, i: 'A' }] // between "s" and "u"
+    const theirs: OtOp[] = [{ p: 8, d: 'su' }, { p: 8, i: 'XY' }] // replaces "su"
+    expect(onServer(text, ours, theirs)).toBe('lorem ipXYAm') // editor-core: after their replacement
+    const shareJs = applyOps(applyOps(text, theirs), transformOps(ours, theirs, 'left'))
+    expect(shareJs).toBe('lorem ipAXYm') // ShareJS: before it
+    // So the engine must not reuse text-ot.ts for history-ot docs:
+    const predicted = applyOps(applyOps(text, theirs), transformInFlight(ours, [toTextOperation(theirs, text)], text))
+    expect(predicted).toBe(onServer(text, ours, theirs))
+  })
+
+  it('transformInFlight matches the server for 5000 random concurrent edit pairs', () => {
     const rand = lcg(2024)
-    for (let n = 0; n < 3000; n++) {
+    let overlapping = 0
+    for (let n = 0; n < 5000; n++) {
       const text = 'lorem ipsum dolor sit amet'.slice(0, 3 + rand(24))
       const ours = randomEdit(text, rand, 'a')
       const theirs = randomEdit(text, rand, 'h')
-
-      // Server: theirs landed first, ours arrives stale and is transformed as operation1.
-      const serverTheirs = TextOp.fromJSON(toTextOperation(theirs, text))
-      const serverOurs = TextOp.transform(TextOp.fromJSON(toTextOperation(ours, text)), serverTheirs)[0]
-      const onServer = serverOurs.apply(serverTheirs.apply(text))
-
-      // Engine: applies theirs, transforms its in-flight op 'left', applies it on the ack.
+      if (ours.length > 1 || theirs.length > 1) overlapping += 1
       const afterTheirs = applyOps(text, theirs)
-      const predicted = applyOps(afterTheirs, transformOps(ours, theirs, 'left'))
-
-      expect(predicted, JSON.stringify({ text, ours, theirs })).toBe(onServer)
+      const predicted = applyOps(afterTheirs, transformInFlight(ours, [toTextOperation(theirs, text)], text))
+      expect(predicted, JSON.stringify({ text, ours, theirs })).toBe(onServer(text, ours, theirs))
     }
+    expect(overlapping, 'multi-component edits in the sample').toBeGreaterThan(1000)
+  })
+
+  it('carries an in-flight op past several operations and past non-text ones', () => {
+    const text = 'abcdef'
+    const ours: OtOp[] = [{ p: 3, i: '!' }]
+    const theirUpdate = [toTextOperation([{ p: 0, i: '>>' }], text), { noOp: true }, { commentId: 't', ranges: [] }]
+    expect(transformInFlight(ours, theirUpdate, text)).toEqual([{ p: 5, i: '!' }])
   })
 })
 
