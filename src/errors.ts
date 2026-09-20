@@ -149,7 +149,7 @@ const HINTS: Partial<Record<ErrorCode, string>> = {
   DOC_CHANGED_EXTERNALLY:
     'A collaborator edited this doc after you last read it; the external-changes block in this response shows their edits. Nothing was written. Use overleaf_edit_doc (it targets text, so it composes with their edits) or merge their changes into your content and retry.',
   COMMENTS_UNSUPPORTED:
-    'Comment threads are part of Overleaf\'s review panel, which overleaf.com and Server Pro have but stock Community Edition does not. Nothing was changed. On this instance, put the note in the text as a LaTeX comment (% ...) or use another host.',
+    'Comments are not available here: either this is a stock Community Edition (no review panel — overleaf.com and Server Pro have one), or the project uses Overleaf\'s newer document format (history-OT), where this server can read and edit text but not yet attach comments. Nothing was changed. Put the note in the text as a LaTeX comment (% ...) instead.',
   DOC_NOT_READ:
     'Read the doc first (overleaf_read_doc) so you do not overwrite text you have not seen, or use overleaf_edit_doc for a targeted change. Pass overwrite=true to replace it regardless.',
   OVERLEAF_AUTH_FAILED:

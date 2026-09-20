@@ -37,10 +37,10 @@ fi
 # --- which versions -------------------------------------------------------------
 wanted=("$@")
 rows=()
-while read -r version image mongo shell redis envfile; do
+while read -r version image mongo shell redis envfile historyot; do
   [[ -z "${version:-}" || "$version" == \#* ]] && continue
   if [[ ${#wanted[@]} -eq 0 ]] || printf '%s\n' "${wanted[@]}" | grep -qxF "$version"; then
-    rows+=("$version $image $mongo $shell $redis $envfile")
+    rows+=("$version $image $mongo $shell $redis $envfile $historyot")
   fi
 done < "$here/versions.conf"
 [[ ${#rows[@]} -gt 0 ]] || die "no matching versions in versions.conf (asked for: ${wanted[*]:-all})"
@@ -125,7 +125,9 @@ export OVERLEAF_IMAGE=unused MONGO_IMAGE=unused MONGO_SHELL=unused REDIS_IMAGE=u
 results=()
 failed=0
 for row in "${rows[@]}"; do
-  read -r version image mongo shell redis envfile <<<"$row"
+  read -r version image mongo shell redis envfile historyot <<<"$row"
+  export LIVE_HISTORY_OT=0 LIVE_PHASE=""
+  [[ "$historyot" == "yes" ]] && LIVE_HISTORY_OT=1
   export OVERLEAF_VERSION="$version" OVERLEAF_IMAGE="$image" MONGO_IMAGE="$mongo" MONGO_SHELL="$shell" REDIS_IMAGE="$redis" OVERLEAF_ENV_FILE="$here/$envfile"
   project="olmcp-live-${version//./-}-$run_id"
   current_project="$project"
@@ -150,6 +152,19 @@ for row in "${rows[@]}"; do
     done
     echo "  Overleaf did not answer on /login within 10 minutes"
     return 1
+  }
+
+  # A project can only change OT protocol while none of its docs is loaded. So: create the
+  # projects without opening anything (bootstrap phase), switch one in Mongo — there is no HTTP
+  # route for it in CE — and only then run the suite.
+  prepare_history_ot_project() {
+    [[ "$LIVE_HISTORY_OT" == "1" ]] || return 0
+    echo "  creating the projects, then switching one to history-ot"
+    LIVE_PHASE=bootstrap interruptible dc run --rm --no-deps -T -e LIVE_PHASE=bootstrap runner >/dev/null || return 1
+    local matched
+    matched="$(dc exec -T mongo "$MONGO_SHELL" --quiet sharelatex --eval \
+      'print(db.projects.updateOne({ name: "live-history-ot" }, { $set: { "overleaf.history.otMigrationStage": 1 } }).matchedCount)' | tr -d '[:space:]')"
+    [[ "$matched" == "1" ]] || { echo "  expected to switch 1 project, matched '${matched}'"; return 1; }
   }
 
   say "Overleaf CE $version — $image + $mongo + $redis (project $project)"
@@ -177,6 +192,8 @@ for row in "${rows[@]}"; do
     elif ! wait_for_overleaf; then
       echo "  --- the instance's own output ---"
       dc logs --no-log-prefix --tail 40 sharelatex 2>/dev/null | grep -v '^[[:space:]]*$' | cut -c1-300 || true
+    elif ! prepare_history_ot_project; then
+      echo "  could not prepare the history-ot project"
     elif interruptible dc run --rm --no-deps -T runner; then
       status="PASS"
     fi

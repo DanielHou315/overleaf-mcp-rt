@@ -81,6 +81,8 @@ services:
     environment:
       LIVE_OVERLEAF_URL: http://sharelatex
       LIVE_EXPECT_VERSION: ${OVERLEAF_VERSION:-}
+      LIVE_HISTORY_OT: ${LIVE_HISTORY_OT:-0}
+      LIVE_PHASE: ${LIVE_PHASE:-}
     networks: [sandbox]
     command: ["npx", "vitest", "run", "--config", "vitest.live.config.ts"]
 

@@ -57,8 +57,9 @@ describe('live matrix isolation', () => {
       .split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => l.split(/\s+/))
     expect(rows.length).toBeGreaterThan(0)
     for (const row of rows) {
-      expect(row, row.join(' ')).toHaveLength(6)
-      const [version, image, , shell, , envFile] = row as [string, string, string, string, string, string]
+      expect(row, row.join(' ')).toHaveLength(7)
+      const [version, image, , shell, , envFile, historyOt] = row as [string, string, string, string, string, string, string]
+      expect(['yes', 'no']).toContain(historyOt)
       expect(image).toBe(`sharelatex/sharelatex:${version}`)
       expect(['mongo', 'mongosh']).toContain(shell)
       expect(existsSync(join(live, envFile)), envFile).toBe(true)

@@ -9,8 +9,11 @@ import type {
   JoinProjectResponse,
   ProjectEntity,
 } from './ot.types.js'
-import { NetworkError, OverleafError } from '../errors.js'
+import { CommentsUnsupportedError, NetworkError, OverleafError } from '../errors.js'
 import { computeOps, sanitizeOps, type OtOp } from './diff.js'
+import {
+  decodeEditOperations, isAscending, isRawStringFileData, toTextOperation, type OtType,
+} from './history-ot.js'
 import { applyOps as applyTextOps, transformOps } from './text-ot.js'
 import type { UpdateSchema } from './ot.types.js'
 
@@ -22,6 +25,8 @@ export interface TreeNode {
 
 export interface DocBaseline {
   docId: string
+  /** Which wire format the server speaks for this doc (see history-ot.ts). Text and ops here are always ShareJS-style. */
+  otType: OtType
   text: string
   version: number
   /** Comment anchors, kept in step with the text as ops arrive. */
@@ -386,7 +391,8 @@ export class OtEngine {
         // A dead socket never acks; without a deadline one lost join would
         // wedge every later join behind it in the queue.
         return withTimeout(
-          socket.emitWithAck('joinDoc', docId, { encodeRanges: true }),
+          // supportsHistoryOT: without it real-time refuses docs of migrated projects. Older servers ignore it.
+          socket.emitWithAck('joinDoc', docId, { encodeRanges: true, supportsHistoryOT: true }),
           this.joinTimeoutMs,
           () => new NetworkError(`Timed out after ${this.joinTimeoutMs}ms joining doc ${docId}`),
         )
@@ -395,17 +401,33 @@ export class OtEngine {
         if (socket !== this.currentSocket) {
           throw new NetworkError('Connection was reset while joining the doc')
         }
-        const [lines, version, , ranges] = data as [string[], number, unknown, JoinDocRanges | undefined]
-        const baseline: DocBaseline = {
-          docId,
-          text: decodeLatin1Lines(lines),
-          version,
-          comments: (ranges?.comments ?? []).map((c) => ({
-            threadId: c.op.t ?? c.id,
-            p: c.op.p,
-            // encodeRanges packs comment text the same way as doc lines.
-            text: Buffer.from(c.op.c ?? '', 'latin1').toString('utf-8'),
-          })),
+        const [lines, version, , ranges] = data as [unknown, number, unknown, JoinDocRanges | undefined]
+        let baseline: DocBaseline
+        if (isRawStringFileData(lines)) {
+          // history-ot: one plain (not latin1-packed) string, comments as ranges into it.
+          const content = lines.content
+          baseline = {
+            docId,
+            otType: 'history-ot',
+            text: content,
+            version,
+            comments: (lines.comments ?? []).flatMap((c) =>
+              c.ranges.map((r) => ({ threadId: c.id, p: r.pos, text: content.slice(r.pos, r.pos + r.length) })),
+            ),
+          }
+        } else {
+          baseline = {
+            docId,
+            otType: 'sharejs-text-ot',
+            text: decodeLatin1Lines(lines as string[]),
+            version,
+            comments: (ranges?.comments ?? []).map((c) => ({
+              threadId: c.op.t ?? c.id,
+              p: c.op.p,
+              // encodeRanges packs comment text the same way as doc lines.
+              text: Buffer.from(c.op.c ?? '', 'latin1').toString('utf-8'),
+            })),
+          }
         }
         this.baselines.set(docId, baseline)
         this.joinBuffers.delete(docId)
@@ -533,7 +555,19 @@ export class OtEngine {
     const textBefore = baseline.text
     const versionBefore = baseline.version
     // Send what the server will store, not what it will silently rewrite (see sanitizeOps).
-    const { ops, replaced: unstorableCodeUnits } = sanitizeOps(build(textBefore))
+    // (For history-ot this is not cosmetic: the server *rejects* an insert containing a surrogate.)
+    let { ops, replaced: unstorableCodeUnits } = sanitizeOps(build(textBefore))
+    const historyOt = baseline.otType === 'history-ot'
+    if (historyOt) {
+      if (ops.some((op) => op.c !== undefined)) {
+        throw new CommentsUnsupportedError(
+          'This project uses Overleaf\'s newer document format (history-OT), where attaching a comment to text is not supported yet. Editing and reading work; nothing was changed.',
+          { docId, otType: baseline.otType },
+        )
+      }
+      // A text operation is one left-to-right pass; hand-positioned components may not be.
+      if (!isAscending(ops)) ops = computeOps(textBefore, applyTextOps(textBefore, ops))
+    }
     if (ops.length === 0) {
       this.reportExternal(docId, textBefore, versionBefore)
       this.markSeen(docId, textBefore, versionBefore)
@@ -554,8 +588,10 @@ export class OtEngine {
       }, this.writeConfirmTimeoutMs)
       this.inflightWrites.set(docId, { ops, resolve, reject, timer })
     })
+    // The engine tracks ShareJS-style components either way; only the wire differs.
+    const wireOp = historyOt ? [toTextOperation(ops, textBefore)] : ops
     this.currentSocket
-      .emitWithAck('applyOtUpdate', docId, { doc: docId, op: ops, v: versionBefore })
+      .emitWithAck('applyOtUpdate', docId, { doc: docId, op: wireOp, v: versionBefore })
       .catch((err: unknown) => {
         this.failInflight(
           docId,
@@ -654,10 +690,13 @@ export class OtEngine {
       return
     }
     try {
-      applyToBaseline(baseline, update.op)
+      const remoteOps = baseline.otType === 'history-ot'
+        ? decodeEditOperations(update.op as unknown[], baseline.text)
+        : update.op
+      applyToBaseline(baseline, remoteOps)
       baseline.version = update.v + 1
       const inflight = this.inflightWrites.get(docId)
-      if (inflight) inflight.ops = transformOps(inflight.ops, update.op, 'left')
+      if (inflight) inflight.ops = transformOps(inflight.ops, remoteOps, 'left')
     } catch {
       this.dropBaseline(docId)
       return

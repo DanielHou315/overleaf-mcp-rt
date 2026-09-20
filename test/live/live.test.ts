@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { acquireTarget, startAgent, joinAsHuman, freshRead, sleep, liveEnabled, isBootstrap, type Agent, type Target } from './helpers.js'
+import { acquireTarget, startAgent, joinAsHuman, freshRead, sleep, liveEnabled, isBootstrap, type Agent, type ProjectKind, type Target } from './helpers.js'
 
 /**
  * The live suite: the built server (`dist/cli.js`, over stdio) against a real
@@ -12,14 +12,25 @@ import { acquireTarget, startAgent, joinAsHuman, freshRead, sleep, liveEnabled, 
 const PACE_MS = isBootstrap ? 0 : 400
 const pace = () => (PACE_MS ? sleep(PACE_MS) : Promise.resolve())
 
-describe.skipIf(!liveEnabled)(`live Overleaf${process.env.LIVE_EXPECT_VERSION ? ` CE ${process.env.LIVE_EXPECT_VERSION}` : ''}`, () => {
+/**
+ * On a throw-away instance the whole suite runs twice: against a project on the
+ * classic ShareJS protocol, and — where the server has it (LIVE_HISTORY_OT=1, set
+ * by run-matrix.sh from versions.conf) — against one switched to history-ot.
+ * On a configured host it runs once, against whatever the named project speaks.
+ */
+const kinds: ProjectKind[] = isBootstrap && process.env.LIVE_HISTORY_OT === '1'
+  ? ['sharejs-text-ot', 'history-ot']
+  : ['sharejs-text-ot']
+const version = process.env.LIVE_EXPECT_VERSION ? ` CE ${process.env.LIVE_EXPECT_VERSION}` : ''
+
+describe.skipIf(!liveEnabled || process.env.LIVE_PHASE === 'bootstrap').each(kinds)(`live Overleaf${version} — %s project`, (kind) => {
   let target: Target
   let agent: Agent
   let projectId: string
   let dir: string
 
   beforeAll(async () => {
-    target = await acquireTarget()
+    target = await acquireTarget(kind)
     projectId = target.projectId
     dir = target.scratch
     agent = await startAgent(target)
@@ -150,7 +161,9 @@ describe.skipIf(!liveEnabled)(`live Overleaf${process.env.LIVE_EXPECT_VERSION ? 
     const human = await joinAsHuman(target)
     try {
       const { id: docId } = await human.engine.waitForPath(path, 5000)
-      await human.engine.openDoc(docId)
+      const opened = await human.engine.openDoc(docId)
+      // Make sure the run exercises the protocol it claims to.
+      if (isBootstrap) expect(opened.otType).toBe(kind)
 
       const typed = 'the quick brown fox jumps over the lazy dog'
       const typing = (async () => {

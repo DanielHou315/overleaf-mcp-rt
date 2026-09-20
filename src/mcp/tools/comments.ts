@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import type { ServerContext } from '../server.js'
-import { EditAmbiguousError, EditNoMatchError, NotFoundError, OverleafError } from '../../errors.js'
+import { CommentsUnsupportedError, EditAmbiguousError, EditNoMatchError, NotFoundError, OverleafError } from '../../errors.js'
 import type { CommentThread } from '../../overleaf/rest.js'
 import { closestRegion, findMatches, lineOf } from './match.js'
 
@@ -102,7 +102,15 @@ export async function handleAddComment(
     return spans[0]!
   }
   // Check the anchor before creating a thread, so a bad anchor leaves nothing behind…
-  locate((await engine.openDoc(docId)).text)
+  const opened = await engine.openDoc(docId)
+  locate(opened.text)
+  // …and that we can attach it at all: an unanchored thread is invisible in the editor.
+  if (opened.otType === 'history-ot') {
+    throw new CommentsUnsupportedError(
+      `${input.path} is in a project that uses Overleaf's newer document format (history-OT); attaching comments to its text is not supported yet. Reading and editing work. Nothing was changed.`,
+      { path: input.path, otType: opened.otType },
+    )
+  }
   // …then follow the editor's order: create the thread, then attach it to the text.
   const threadId = newThreadId()
   await ctx.rest.postThreadMessage(input.projectId, threadId, posted)
