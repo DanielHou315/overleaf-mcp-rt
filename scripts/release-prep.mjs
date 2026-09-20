@@ -19,6 +19,7 @@ execFileSync('npm', ['version', version, '--no-git-tag-version', '--allow-same-v
 for (const path of [
   '.claude-plugin/plugin.json',
   '.cursor-plugin/plugin.json',
+  '.codex-plugin/plugin.json',
   '.claude-plugin/marketplace.json',
   '.cursor-plugin/marketplace.json',
 ]) {

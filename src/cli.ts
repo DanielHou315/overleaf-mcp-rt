@@ -9,7 +9,7 @@ import { buildContext, runMcpServer, HostRegistry } from './mcp/server.js'
 import { browserLogin } from './overleaf/browser-login.js'
 import { VERSION } from './version.js'
 import { installSkills, listSkills } from './skills.js'
-import { InvalidConfigError, OverleafError, AuthFailedError } from './errors.js'
+import { InvalidConfigError, OverleafError, AuthFailedError, ProxyAuthFailedError } from './errors.js'
 import { OverleafHttp } from './overleaf/http.js'
 import { OverleafRest } from './overleaf/rest.js'
 import { OverleafSocket } from './overleaf/socket.js'
@@ -84,18 +84,32 @@ export async function runDiagnose(
   steps.push({ name: 'config', status: 'ok', detail: `URL ${cfg.url}` })
   writeLine(`✓ config — URL ${cfg.url}`)
 
-  // Step 2: REST handshake — GET /project, capture CF headers + scrape CSRF
+  const noExtraHeaders = Object.keys(cfg.extraHeaders).length === 0
+  // Only shown next to a failure: a proxy that lets everything through needs no configuration.
+  const proxyHint = noExtraHeaders
+    ? ' No extra headers are configured: if an authentication proxy sits in front of Overleaf, add its headers with `login --header KEY=VALUE` or OVERLEAF_EXTRA_HEADERS.'
+    : ' Check that the configured extra headers are still valid for the proxy.'
+
+  // Step 2: REST handshake — GET /project, scrape CSRF, recognise an auth proxy answering instead of Overleaf
   let csrfToken: string | null = null
-  let cfDetected = false
   try {
     const headers = new Headers({ Cookie: cfg.sessionCookie })
     for (const [k, v] of Object.entries(cfg.extraHeaders)) headers.set(k, v)
     const res = await fetch(new URL('/project', cfg.url + '/').toString(), {
       method: 'GET', headers, redirect: 'manual',
     })
-    cfDetected = res.headers.has('cf-ray') || res.headers.has('cf-mitigated')
-    if (res.status === 302 && (res.headers.get('location') ?? '').includes('/login')) {
-      throw new AuthFailedError('Session redirected to /login (cookie expired)')
+    const location = res.headers.get('location') ?? ''
+    if (res.status >= 300 && res.status < 400) {
+      const target = new URL(location, cfg.url + '/')
+      if (target.host !== new URL(cfg.url).host) {
+        throw new ProxyAuthFailedError(`redirected to ${target.host}, which looks like a proxy sign-in page.${proxyHint}`)
+      }
+      if (target.pathname.endsWith('/login')) {
+        throw new AuthFailedError('Session redirected to /login (cookie expired)')
+      }
+    }
+    if (res.status === 401 || res.status === 403 || res.headers.has('cf-mitigated')) {
+      throw new ProxyAuthFailedError(`GET /project returned ${res.status} before reaching Overleaf.${proxyHint}`)
     }
     if (!res.ok) {
       throw new OverleafError('OVERLEAF_GENERIC', `GET /project returned ${res.status}`)
@@ -114,19 +128,7 @@ export async function runDiagnose(
     return { ok, steps } // Subsequent steps require a session
   }
 
-  // Step 3: Reverse-proxy hint
-  if (cfDetected && Object.keys(cfg.extraHeaders).length === 0) {
-    steps.push({
-      name: 'reverse-proxy',
-      status: 'warn',
-      detail: 'CF-Access headers detected on /project response but OVERLEAF_EXTRA_HEADERS is empty; OT handshake may fail',
-    })
-    writeLine('⚠ reverse-proxy — CF detected but no extra headers configured')
-  } else if (cfDetected) {
-    writeLine('✓ reverse-proxy — CF detected, extraHeaders configured')
-  }
-
-  // Step 4: project listing
+  // Step 3: project listing
   let projectId: string | undefined = options.projectId
   try {
     const http = new OverleafHttp({ url: cfg.url, sessionCookie: cfg.sessionCookie, csrfToken: csrfToken ?? undefined, extraHeaders: cfg.extraHeaders })
@@ -142,7 +144,7 @@ export async function runDiagnose(
     writeLine(`✗ project listing — ${msg}`)
   }
 
-  // Step 5: OT handshake
+  // Step 4: OT handshake
   if (!options.skipOt && projectId) {
     let engine: OtEngine | undefined
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined
@@ -167,6 +169,8 @@ export async function runDiagnose(
       const msg = err instanceof OverleafError ? `${err.code}: ${err.message}` : String((err as Error).message ?? err)
       steps.push({ name: 'OT handshake', status: 'fail', detail: msg })
       writeLine(`✗ OT handshake — ${msg}`)
+      // REST works, so the session is fine: whatever is in the way only affects the websocket path.
+      writeLine('  REST works but the real-time connection does not: a reverse proxy must forward /socket.io (including WebSocket upgrades) to Overleaf.')
     } finally {
       if (timeoutHandle) clearTimeout(timeoutHandle)
       if (engine) {

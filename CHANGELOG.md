@@ -4,6 +4,18 @@ All notable changes to `overleaf-mcp-rt`. The format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Added
+
+- **Codex plugin.** `.codex-plugin/plugin.json` makes the repository installable with `codex plugin marketplace add DanielHou315/overleaf-mcp-rt` + `codex plugin add overleaf-mcp-rt@overleaf-mcp-rt`: the MCP server, the four skills, and the two commands (which Codex turns into skills). Codex could already install from the Claude Code manifest, but it does not expand the plugin-root variable in MCP arguments, so the server silently never started.
+
+### Fixed
+
+- `diagnose` no longer prints `⚠ reverse-proxy — CF detected but no extra headers configured` for an instance that merely sits behind a CDN and works. A proxy is now only mentioned when it is actually in the way: a redirect to a sign-in page on another host, or a 401 / 403 / challenge on `/project`, is reported as `PROXY_AUTH_FAILED` (previously a generic error or a misleading `OVERLEAF_AUTH_FAILED`) with a hint about `login --header` / `OVERLEAF_EXTRA_HEADERS`; and an OT handshake that fails after REST succeeded points at WebSocket forwarding.
+
+### Documentation
+
+- README leads with support for both self-hosted Overleaf (Community Edition / Server Pro) and overleaf.com, with a new *Supported Overleaf servers* table and a short recording of an agent and a person editing the same file.
+
 ## [2.0.0] — 2026-09-20
 
 First release since 1.1.1. (1.2.0 was prepared but never published; its changes are included here.) A major version because agent-visible behaviour changed in ways that can break existing prompts and integrations — see the next section.
