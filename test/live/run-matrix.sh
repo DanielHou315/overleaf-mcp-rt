@@ -87,14 +87,22 @@ teardown() {
   [[ -z "$left" ]] || docker network rm $left >/dev/null 2>&1 || true
 }
 
+# Remove images this run pulled: all of them, or (given a name) just that one —
+# the multi-gigabyte Overleaf image goes as soon as its version is done, the
+# small shared ones (node, redis, mongo) stay until the end so they aren't
+# pulled again for the next version.
 remove_pulled_images() {
   [[ "${KEEP_IMAGES:-0}" == "1" ]] && return 0
-  local image
+  local only="${1:-}" image keep=()
   for image in ${pulled_images[@]+"${pulled_images[@]}"}; do
+    if [[ -n "$only" && "$image" != "$only" ]]; then
+      keep+=("$image")
+      continue
+    fi
     # Fails harmlessly if some other container started using it meanwhile.
     docker image rm "$image" >/dev/null 2>&1 && echo "  removed image $image" || echo "  left image $image (in use)"
   done
-  pulled_images=()
+  pulled_images=(${keep[@]+"${keep[@]}"})
 }
 
 on_exit() {
@@ -195,8 +203,9 @@ for row in "${rows[@]}"; do
   say "cleaning up $project"
   teardown "$project"
   current_project=""
-  remove_pulled_images
+  remove_pulled_images "$image"
 done
+remove_pulled_images
 
 say "summary"
 for result in "${results[@]}"; do printf '  %-8s %s\n' $result; done
