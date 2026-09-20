@@ -374,6 +374,8 @@ The `rt` suffix marks this as the **r**eal-**t**ime / OT-backed flavor, since ot
 npm ci && npm run typecheck && npm test && npm run build
 ```
 
+**Live tests against real Overleaf servers** live in [`test/live/`](test/live/README.md): `test/live/run-matrix.sh` runs the built server against a throw-away Community Edition of every supported major (3.x – 6.x) on a Docker host — no published ports, an internal network, everything removed afterwards — and `LIVE_HOST=overleaf.com npm run test:live` runs the same suite against a host you are logged in to. They are not part of `npm test`.
+
 **Repository layout = plugin layout.** The repo root is the plugin root, shared by every harness:
 
 ```

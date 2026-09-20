@@ -51,6 +51,7 @@ src/overleaf/socket.ts      Socket.IO 0.9 client wrapper (Overleaf's fork, patch
 src/overleaf/rest.ts, http.ts, auth.ts   REST client, cookie validation, LB stickiness cookie
 src/overleaf/browser-login.ts            login --browser via the DevTools protocol
 test/unit/                  vitest; fake-overleaf.ts is a protocol-faithful fake server
+test/live/                  the built server against real Overleaf: throw-away CE version matrix, or a configured host
 scripts/                    build.mjs, live-test helpers, changelog-section.mjs
 ```
 
@@ -80,6 +81,8 @@ npm run typecheck && npm test && npm run build
 - The real-browser login test launches a headless browser locally and is skipped on CI.
 - Live checks against a real instance: `npm run build`, then `node scripts/agent-session.mjs` (a long-lived MCP client you drive with `curl`) while editing in a browser; `scripts/latency-probe.mjs` times agent edits; `scripts/smoke-stdio.mjs` checks the bundle starts. Use a scratch file, keep edit rates humane on overleaf.com, and clean up.
 - Plugin changes: validate and install from the checkout as described in README → Developing.
+- **Live suite** (`test/live/`, not part of `npm test` or CI): `test/live/run-matrix.sh [versions…]` on a Docker host starts a throw-away CE per version in `versions.conf`, runs `live.test.ts` against it from inside its network, greps the server's own logs for OT errors, and removes everything. `LIVE_HOST=<name> npm run test:live` points the same suite at a configured host such as overleaf.com (scratch folder in a scratch project, paced, cleaned up). Run the matrix for changes to `src/overleaf/` and before a release; add new Overleaf releases to `versions.conf`.
+- The matrix may share a machine with a production Overleaf. Its isolation rules are not negotiable and `test/unit/live-matrix.test.ts` enforces them: **no published ports, an `internal` network, no fixed container names, nothing built, no `docker … prune`, remove only what the run created** (including only the images it pulled).
 
 ## Workflow conventions
 
