@@ -1,6 +1,6 @@
 import { parse as parseHtml } from 'node-html-parser'
 import { OverleafHttp } from './http.js'
-import { CommentsUnsupportedError, OverleafError } from '../errors.js'
+import { CommentsUnsupportedError, NetworkError, OverleafError } from '../errors.js'
 
 export interface ProjectSummary {
   id: string
@@ -20,8 +20,13 @@ export interface CompileResponse {
   status: string
   outputFiles: CompileOutputFile[]
   compileGroup?: string
+  /** Which compile server holds this build's output (hosted / load-balanced instances). */
+  clsiServerId?: string
   pdfDownloadDomain?: string
 }
+
+/** Where a compile's output files are, as told by the compile response. */
+export type OutputLocation = Pick<CompileResponse, 'pdfDownloadDomain' | 'compileGroup' | 'clsiServerId'>
 
 export interface DownloadedBytes {
   bytes: Buffer
@@ -59,12 +64,33 @@ export class OverleafRest {
     }))
   }
 
+  /**
+   * A deliberate compile, not `?auto_compile=true`: that flag marks the
+   * editor's compile-on-keystroke, which the server throttles per user and
+   * server-wide ("autocompile-backoff"). Every compile is still limited to one
+   * per project per second ("too-recently-compiled", CompileManager.COMPILE_DELAY);
+   * tools that compile back to back (compile → read log → download PDF) run into
+   * that, so wait it out once rather than report a compile with no output.
+   */
   async compile(
     projectId: string,
     opts: { draft?: boolean; stopOnFirstError?: boolean; rootResourcePath?: string } = {},
   ): Promise<CompileResponse> {
+    const first = await this.compileOnce(projectId, opts)
+    if (first.status !== 'too-recently-compiled') return first
+    await new Promise((r) => setTimeout(r, this.compileRetryDelayMs))
+    return this.compileOnce(projectId, opts)
+  }
+
+  /** Just over the server's one-second window. Tests shorten it. */
+  compileRetryDelayMs = 1200
+
+  private async compileOnce(
+    projectId: string,
+    opts: { draft?: boolean; stopOnFirstError?: boolean; rootResourcePath?: string },
+  ): Promise<CompileResponse> {
     const res = await this.http.postJson(
-      `/project/${encodeURIComponent(projectId)}/compile?auto_compile=true`,
+      `/project/${encodeURIComponent(projectId)}/compile`,
       {
         check: 'silent',
         draft: opts.draft ?? false,
@@ -79,18 +105,36 @@ export class OverleafRest {
     return (await res.json()) as CompileResponse
   }
 
-  async downloadOutputFile(
-    buildUrl: string,
-    pdfDownloadDomain?: string,
-  ): Promise<DownloadedBytes> {
-    const url = pdfDownloadDomain && buildUrl.startsWith('/')
-      ? pdfDownloadDomain.replace(/\/+$/, '') + buildUrl
+  /**
+   * Fetch one output file of a compile, the way the editor does (buildFileUrl):
+   * on instances with several compile servers the build only exists on the one
+   * that ran it, and `clsiserverid` / `compileGroup` route the request there —
+   * without them overleaf.com answers 404.
+   *
+   * Hosted instances serve output from a separate user-content domain. The
+   * session cookie and proxy headers belong to the Overleaf origin and are not
+   * sent anywhere else; the unguessable build URL is the credential there.
+   */
+  async downloadOutputFile(buildUrl: string, where: OutputLocation = {}): Promise<DownloadedBytes> {
+    const base = where.pdfDownloadDomain && buildUrl.startsWith('/')
+      ? where.pdfDownloadDomain.replace(/\/+$/, '') + buildUrl
       : buildUrl
-    const res = await this.http.get(url)
+    const target = new URL(base, this.http.url + '/')
+    if (where.compileGroup) target.searchParams.set('compileGroup', where.compileGroup)
+    if (where.clsiServerId) target.searchParams.set('clsiserverid', where.clsiServerId)
+    const url = target.toString()
+    const sameOrigin = target.origin === new URL(this.http.url).origin
+    let res: Response
+    try {
+      res = sameOrigin ? await this.http.get(url) : await fetch(url)
+    } catch (err) {
+      if (err instanceof OverleafError) throw err
+      throw new NetworkError(`fetch failed for GET ${target.origin}${target.pathname}`, err)
+    }
     if (!res.ok) {
       throw new OverleafError(
         'OVERLEAF_GENERIC',
-        `output file ${url} returned ${res.status}`,
+        `output file ${target.origin}${target.pathname} returned ${res.status}`,
       )
     }
     const bytes = Buffer.from(await res.arrayBuffer())

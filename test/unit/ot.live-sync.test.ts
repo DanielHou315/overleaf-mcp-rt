@@ -203,4 +203,25 @@ describe('OtEngine live sync with a collaborator', () => {
     expect(server.text('d1')).toBe('𝛼 naïve — thé')
     expect(engine.readDoc('d1')).toBe(server.text('d1'))
   })
+
+  it('stores what the server stores when the agent writes characters Overleaf cannot keep (emoji)', async () => {
+    // Found by the live suite: document-updater rewrites surrogates in inserts to U+FFFD and
+    // only acks the sender. Keeping the emoji locally meant the next delete across it was
+    // rejected — and a rejection disconnects every client on the doc.
+    const server = new FakeOverleaf({ d1: 'Grade: pending.' })
+    const engine = await connectEngine(server)
+    const errors: unknown[] = []
+    server.sock.on('otUpdateError', (e) => errors.push(e))
+
+    const written = await engine.updateDoc('d1', (t) => t.replace('pending', 'passed 🎓'))
+    expect(written.unstorableCodeUnits).toBe(2)
+    expect(server.text('d1')).toBe('Grade: passed \uFFFD\uFFFD.')
+    expect(engine.readDoc('d1')).toBe(server.text('d1'))
+
+    // The edit that used to get everyone kicked out: delete straight across that text.
+    await engine.updateDoc('d1', (t) => t.replace(/passed .*\./, 'done.'))
+    expect(errors).toEqual([])
+    expect(server.text('d1')).toBe('Grade: done.')
+    expect(engine.readDoc('d1')).toBe(server.text('d1'))
+  })
 })

@@ -13,6 +13,32 @@ export interface OtOp {
   t?: string
 }
 
+const SURROGATES = /[\uD800-\uDFFF]/g
+
+/**
+ * Overleaf cannot store characters outside the Basic Multilingual Plane
+ * (emoji, some CJK extensions, maths alphabets). document-updater rewrites
+ * every UTF-16 surrogate in an inserted string to U+FFFD before applying it
+ * (UpdateManager._sanitizeUpdate) — and the sender is only sent an ack, never
+ * the rewritten op. A client that keeps what it typed therefore disagrees with
+ * the server from then on, and its next delete across that text is rejected,
+ * which disconnects everyone in the doc. So do the server's rewrite ourselves,
+ * before the op is sent and before it is applied to our snapshot. Lengths are
+ * unchanged (one code unit for one), so no offsets move.
+ */
+export function sanitizeOps(ops: OtOp[]): { ops: OtOp[]; replaced: number } {
+  let replaced = 0
+  const out = ops.map((op) => {
+    if (op.i === undefined) return op
+    const i = op.i.replace(SURROGATES, () => {
+      replaced += 1
+      return '\uFFFD'
+    })
+    return i === op.i ? op : { ...op, i }
+  })
+  return { ops: out, replaced }
+}
+
 const EQUAL = 0
 const DELETE = -1
 const INSERT = 1

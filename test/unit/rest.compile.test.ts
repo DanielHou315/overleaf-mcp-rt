@@ -24,8 +24,8 @@ describe('OverleafRest.compile', () => {
   it('POSTs and returns the parsed compile response', async () => {
     server.use(
       http.post('https://o.example/project/p1/compile', async ({ request }) => {
-        const url = new URL(request.url)
-        expect(url.searchParams.get('auto_compile')).toBe('true')
+        // Not an editor keystroke-compile: those are throttled server-wide.
+        expect(new URL(request.url).searchParams.has('auto_compile')).toBe(false)
         const body = (await request.json()) as Record<string, unknown>
         expect(body.draft).toBe(false)
         expect(body.stopOnFirstError).toBe(false)
@@ -53,6 +53,42 @@ describe('OverleafRest.compile', () => {
       }),
     )
     await makeRest().compile('p1', { draft: true, stopOnFirstError: true })
+  })
+})
+
+describe('OverleafRest.compile when the project was compiled less than a second ago', () => {
+  // Found by the live suite: compile → read_compile_log back to back got
+  // {status: 'too-recently-compiled', outputFiles: []} and reported "no log".
+  it('waits out the server\'s one-second window and compiles again', async () => {
+    let calls = 0
+    server.use(
+      http.post('https://o.example/project/p1/compile', () => {
+        calls += 1
+        return calls === 1
+          ? HttpResponse.json({ status: 'too-recently-compiled', outputFiles: [] })
+          : HttpResponse.json({ status: 'success', outputFiles: [{ path: 'output.log', url: '/l', type: 'log' }] })
+      }),
+    )
+    const rest = makeRest()
+    rest.compileRetryDelayMs = 5
+    const result = await rest.compile('p1')
+    expect(calls).toBe(2)
+    expect(result.status).toBe('success')
+    expect(result.outputFiles).toHaveLength(1)
+  })
+
+  it('retries once only, and hands back the status if the server still refuses', async () => {
+    let calls = 0
+    server.use(
+      http.post('https://o.example/project/p1/compile', () => {
+        calls += 1
+        return HttpResponse.json({ status: 'too-recently-compiled', outputFiles: [] })
+      }),
+    )
+    const rest = makeRest()
+    rest.compileRetryDelayMs = 5
+    expect((await rest.compile('p1')).status).toBe('too-recently-compiled')
+    expect(calls).toBe(2)
   })
 })
 
@@ -107,7 +143,7 @@ describe('OverleafRest.downloadOutputFile (with pdfDownloadDomain)', () => {
     expect(compileRes.pdfDownloadDomain).toBe('https://cdn.o.example')
 
     const url = compileRes.outputFiles.find((f) => f.path === 'output.pdf')!.url
-    const { bytes, contentType } = await rest.downloadOutputFile(url, compileRes.pdfDownloadDomain)
+    const { bytes, contentType } = await rest.downloadOutputFile(url, compileRes)
     expect(bytes.toString('utf-8').startsWith('%PDF')).toBe(true)
     expect(contentType).toBe('application/pdf')
   })
@@ -121,5 +157,41 @@ describe('OverleafRest.downloadOutputFile (with pdfDownloadDomain)', () => {
     )
     const { bytes } = await rest.downloadOutputFile('/project/p7/build/b/output/output.pdf')
     expect(bytes[0]).toBe(0x25)
+  })
+
+  // Found by the live suite on overleaf.com: without these the download 404s,
+  // because the build only exists on the compile server that ran it.
+  it('routes the download to the compile server that holds the build', async () => {
+    let seen: URL | undefined
+    server.use(
+      http.get('https://cdn.o.example/zone/c/project/p7/build/b/output/output.log', ({ request }) => {
+        seen = new URL(request.url)
+        return HttpResponse.text('log')
+      }),
+    )
+    await makeRest().downloadOutputFile('/project/p7/build/b/output/output.log', {
+      pdfDownloadDomain: 'https://cdn.o.example/zone/c', compileGroup: 'standard', clsiServerId: 'clsi-7',
+    })
+    expect(seen!.searchParams.get('clsiserverid')).toBe('clsi-7')
+    expect(seen!.searchParams.get('compileGroup')).toBe('standard')
+  })
+
+  it('keeps the session cookie and proxy headers on the Overleaf origin', async () => {
+    const headersAt: Record<string, Headers> = {}
+    server.use(
+      http.get('https://cdn.o.example/project/p7/build/b/output/output.log', ({ request }) => {
+        headersAt.cdn = request.headers
+        return HttpResponse.text('log')
+      }),
+      http.get('https://o.example/project/p7/build/b/output/output.log', ({ request }) => {
+        headersAt.origin = request.headers
+        return HttpResponse.text('log')
+      }),
+    )
+    const rest = makeRest()
+    await rest.downloadOutputFile('/project/p7/build/b/output/output.log', { pdfDownloadDomain: 'https://cdn.o.example' })
+    await rest.downloadOutputFile('/project/p7/build/b/output/output.log')
+    expect(headersAt.cdn!.get('cookie')).toBeNull()
+    expect(headersAt.origin!.get('cookie')).toContain('=')
   })
 })

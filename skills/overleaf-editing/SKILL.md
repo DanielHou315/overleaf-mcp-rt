@@ -21,6 +21,7 @@ These are **live, shared documents**. A person may be typing in the same file ri
 - Several edits to one file go in **one call**. They apply in order, each seeing the previous result, and atomically — if one fails, none apply.
 - Insert by repeating an anchor: `old_string: "\\section{Results}"`, `new_string: "\\section{Results}\nNew paragraph."`. Delete with `new_string: ""`.
 - JSON needs LaTeX backslashes doubled: `\\cite{x}`.
+- Overleaf cannot store emoji or other characters outside the Basic Multilingual Plane; they are stored as `\uFFFD` and the result's `notes` says so. Use a LaTeX command instead.
 
 ## `<external-changes>` — read it every time
 
