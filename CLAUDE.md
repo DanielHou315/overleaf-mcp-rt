@@ -17,7 +17,7 @@ Agent edits travel as live operational-transform (OT) ops from a logged-in accou
 
 - **No fork of `sharelatex/sharelatex`.** Anything that requires modifying the Overleaf image is out of scope; users must be able to upgrade Overleaf cleanly.
 - **AGPL-3.0-or-later** for everything we ship, because the auth and OT client are ported from [Overleaf-Workshop](https://github.com/iamhyc/Overleaf-Workshop) (AGPL-3.0). `src/overleaf/text-ot.ts` is a port of Overleaf's ShareJS `text` type (MIT upstream); keep the attribution headers.
-- **Stock Overleaf CE 3.x – 6.x**, with 6.x the primary target, plus overleaf.com. Features that only exist in Server Pro / overleaf.com (comments) must detect their absence and fail cleanly on CE before changing anything.
+- **Stock Overleaf CE 4.x – 6.x**, with 6.x the primary target, plus overleaf.com. The supported range is what the live matrix (`test/live/versions.conf`) passes on; 3.x was dropped when the matrix showed it never worked (older real-time handshake). Features that only exist in Server Pro / overleaf.com (comments) must detect their absence and fail cleanly on CE before changing anything.
 - **Reverse-proxy auth pass-through** (Cloudflare Access, basic auth, …) via configurable HTTP headers, applied to both REST and the Socket.IO handshake.
 - **Never disturb a human's editing session.** Overleaf's real-time service answers a rejected op by disconnecting *every* client on that doc. Any change to the OT path needs a test in `test/unit/ot.live-sync.test.ts` and, ideally, a live run with a browser open (see Testing).
 - **Credentials are the user's.** Never log, print or read back session cookies; login flows are run by the user.
@@ -51,6 +51,7 @@ src/overleaf/socket.ts      Socket.IO 0.9 client wrapper (Overleaf's fork, patch
 src/overleaf/rest.ts, http.ts, auth.ts   REST client, cookie validation, LB stickiness cookie
 src/overleaf/browser-login.ts            login --browser via the DevTools protocol
 test/unit/                  vitest; fake-overleaf.ts is a protocol-faithful fake server
+test/live/                  the built server against real Overleaf: throw-away CE version matrix, or a configured host
 scripts/                    build.mjs, live-test helpers, changelog-section.mjs
 ```
 
@@ -80,6 +81,8 @@ npm run typecheck && npm test && npm run build
 - The real-browser login test launches a headless browser locally and is skipped on CI.
 - Live checks against a real instance: `npm run build`, then `node scripts/agent-session.mjs` (a long-lived MCP client you drive with `curl`) while editing in a browser; `scripts/latency-probe.mjs` times agent edits; `scripts/smoke-stdio.mjs` checks the bundle starts. Use a scratch file, keep edit rates humane on overleaf.com, and clean up.
 - Plugin changes: validate and install from the checkout as described in README → Developing.
+- **Live suite** (`test/live/`, not part of `npm test` or CI): `test/live/run-matrix.sh [versions…]` on a Docker host starts a throw-away CE per version in `versions.conf`, runs `live.test.ts` against it from inside its network, greps the server's own logs for OT errors, and removes everything. `LIVE_HOST=<name> npm run test:live` points the same suite at a configured host such as overleaf.com (scratch folder in a scratch project, paced, cleaned up). Run the matrix for changes to `src/overleaf/` and before a release; add new Overleaf releases to `versions.conf`.
+- The matrix may share a machine with a production Overleaf. Its isolation rules are not negotiable and `test/unit/live-matrix.test.ts` enforces them: **no published ports, an `internal` network, no fixed container names, nothing built, no `docker … prune`, remove only what the run created** (including only the images it pulled).
 
 ## Workflow conventions
 

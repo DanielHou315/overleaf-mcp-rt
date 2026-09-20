@@ -115,6 +115,8 @@ export interface OtEngineOptions {
   writeConfirmTimeoutMs?: number
   /** How long to wait for a joinDoc response (default 15s). */
   joinTimeoutMs?: number
+  /** How long to wait for the project handshake in connect() (default 20s). */
+  connectTimeoutMs?: number
 }
 
 /**
@@ -172,6 +174,7 @@ export class OtEngine {
   private userNames = new Map<string, string>()
   private readonly writeConfirmTimeoutMs: number
   private readonly joinTimeoutMs: number
+  private readonly connectTimeoutMs: number
 
   constructor(opts: OtEngineOptions) {
     this.currentSocket = opts.socket
@@ -183,6 +186,7 @@ export class OtEngine {
     this.schedule = opts.schedule ?? setTimeout
     this.writeConfirmTimeoutMs = opts.writeConfirmTimeoutMs ?? 15_000
     this.joinTimeoutMs = opts.joinTimeoutMs ?? 15_000
+    this.connectTimeoutMs = opts.connectTimeoutMs ?? 20_000
   }
 
   get publicId(): string | null { return this._publicId }
@@ -191,13 +195,30 @@ export class OtEngine {
   /**
    * Wait for the server-driven handshake to complete. Resolves when
    * BOTH connectionAccepted (carries publicId) AND joinProjectResponse
-   * (carries the tree) have arrived. Rejects on connectionRejected.
+   * (carries the tree) have arrived. Rejects on connectionRejected, and
+   * after connectTimeoutMs if the server never completes the handshake: a
+   * proxy that doesn't forward /socket.io, or an Overleaf older than 4.x,
+   * whose real-time service answers joinProject with an ack instead of
+   * pushing joinProjectResponse (found by the live matrix with CE 3.5.13 —
+   * without this a tool call just hung until the MCP client gave up).
    */
   async connect(): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<void>((resolveConnect, rejectConnect) => {
       let gotPublicId = false
       let gotProject = false
       let finished = false
+      const timer = setTimeout(() => {
+        if (finished) return
+        // A handshake that completes after we gave up must not wire up an engine nobody holds.
+        finished = true
+        rejectConnect(new NetworkError(
+          `The real-time connection to project ${this.projectId} was not established within ${this.connectTimeoutMs}ms. ` +
+            'REST may still work. Check that any reverse proxy forwards /socket.io (including WebSocket upgrades) to Overleaf, ' +
+            'and that the server is Overleaf 4.x or later — 3.x and older use a handshake this client does not support.',
+        ))
+      }, this.connectTimeoutMs)
+      const resolve = (): void => { clearTimeout(timer); resolveConnect() }
+      const reject = (err: Error): void => { clearTimeout(timer); finished = true; rejectConnect(err) }
       const finishIfReady = () => {
         // connectionAccepted can land after a joinProjectResponse that already
         // carried publicId; installing the handlers twice would double-apply
