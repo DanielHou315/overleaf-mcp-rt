@@ -1,0 +1,86 @@
+# Throw-away Overleaf Community Edition for the live test matrix.
+# Driven by run-matrix.sh — don't `docker compose up` this by hand.
+#
+# Isolation rules (run-matrix.sh and test/unit/live-matrix.test.ts enforce them):
+#   - NO published ports, anywhere. Nothing here is reachable from outside the
+#     Docker host, so it can't be mistaken for, or interfere with, a real instance.
+#   - Overleaf, Mongo, Redis and the test runner share one `internal` network:
+#     no route in, no route out.
+#   - No bind mounts into the instance: all its state lives in anonymous volumes,
+#     and `down -v` deletes those together with the runner's `work` volume.
+#   - No `build:` — only stock images, so no build cache is ever created.
+services:
+  sharelatex:
+    image: ${OVERLEAF_IMAGE:?set by run-matrix.sh}
+    env_file: ${OVERLEAF_ENV_FILE:?set by run-matrix.sh}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks: [sandbox]
+    stop_grace_period: 5s
+
+  mongo:
+    image: ${MONGO_IMAGE:?set by run-matrix.sh}
+    command: --replSet overleaf
+    healthcheck:
+      # Initiates the single-node replica set on first run, then reports healthy once it is primary.
+      test:
+        - CMD-SHELL
+        - >-
+          ${MONGO_SHELL:?set by run-matrix.sh} --quiet --eval
+          'try { rs.status() } catch (e) { rs.initiate({ _id: "overleaf", members: [{ _id: 0, host: "mongo:27017" }] }) };
+          if (!db.hello().isWritablePrimary) quit(1)'
+      interval: 5s
+      timeout: 10s
+      retries: 30
+    networks: [sandbox]
+    stop_grace_period: 5s
+
+  redis:
+    image: ${REDIS_IMAGE:?set by run-matrix.sh}
+    networks: [sandbox]
+    stop_grace_period: 2s
+
+  # Copies the checkout into the `work` volume and installs + builds there, so
+  # nothing is written into the checkout. The only service with network egress
+  # (npm registry); it never joins the sandbox network.
+  prepare:
+    profiles: [tools]
+    image: ${NODE_IMAGE:-node:22-bookworm-slim}
+    working_dir: /work
+    volumes:
+      - ${REPO_ROOT:?set by run-matrix.sh}:/src:ro
+      - work:/work
+    networks: [egress]
+    command:
+      - sh
+      - -ec
+      - |
+        cd /src
+        tar -cf - --exclude=./node_modules --exclude=./dist --exclude=./.git --exclude=./.claude . | tar -xf - -C /work
+        cd /work
+        npm ci --no-audit --no-fund --loglevel=error
+        npm run build
+
+  # Runs the live suite against http://sharelatex from inside the sandbox network.
+  runner:
+    profiles: [tools]
+    image: ${NODE_IMAGE:-node:22-bookworm-slim}
+    working_dir: /work
+    volumes:
+      - work:/work
+    environment:
+      LIVE_OVERLEAF_URL: http://sharelatex
+      LIVE_EXPECT_VERSION: ${OVERLEAF_VERSION:-}
+    networks: [sandbox]
+    command: ["npx", "vitest", "run", "--config", "vitest.live.config.ts"]
+
+networks:
+  sandbox:
+    internal: true
+  egress: {}
+
+volumes:
+  work: {}
