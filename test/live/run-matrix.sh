@@ -12,7 +12,8 @@
 #   - the instance's network is `internal`: verified after start;
 #   - on exit — success, failure or Ctrl-C — containers, volumes and networks of
 #     the run are removed, and so is every image this run pulled. Images that
-#     were already on the host are never touched;
+#     were already on the host are never touched. A plain `kill` of this script
+#     triggers the same clean-up immediately;
 #   - nothing is built, so no build cache is created (checked at the end).
 set -euo pipefail
 
@@ -45,8 +46,27 @@ done < "$here/versions.conf"
 [[ ${#rows[@]} -gt 0 ]] || die "no matching versions in versions.conf (asked for: ${wanted[*]:-all})"
 
 image_present() { docker image inspect "$1" >/dev/null 2>&1; }
+
+# bash only runs a trap once the foreground command returns, and a test runner
+# can sit for minutes. Run long commands in the background and `wait` on them:
+# `wait` returns as soon as a trapped signal arrives, so a plain `kill` of this
+# script cleans up straight away instead of after the runner's timeout.
+child=""
+interruptible() {
+  "$@" &
+  child=$!
+  local code=0
+  wait "$child" || code=$?
+  child=""
+  return "$code"
+}
 build_cache() { docker system df --format '{{.Type}}={{.Size}}' | grep -i '^Build Cache' || true; }
 cache_before="$(build_cache)"
+dangling_volumes() { docker volume ls -q --filter dangling=true | wc -l | tr -d ' '; }
+volumes_before="$(dangling_volumes)"
+
+# 6.x refuses to boot without its token secrets. Throw-away, so: random, per run, never written down.
+export LIVE_RANDOM_SECRET="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 
 current_project=""
 pulled_images=()
@@ -58,7 +78,9 @@ teardown() {
   # Belt and braces: anything still carrying the project label.
   local left
   left="$(docker ps -aq --filter "label=com.docker.compose.project=$project")"
-  [[ -z "$left" ]] || docker rm -f $left >/dev/null 2>&1 || true
+  # -v: the images declare anonymous data volumes, which carry no project label
+  # and would otherwise be orphaned by a plain `rm -f`.
+  [[ -z "$left" ]] || docker rm -f -v $left >/dev/null 2>&1 || true
   left="$(docker volume ls -q --filter "label=com.docker.compose.project=$project")"
   [[ -z "$left" ]] || docker volume rm -f $left >/dev/null 2>&1 || true
   left="$(docker network ls -q --filter "label=com.docker.compose.project=$project")"
@@ -78,6 +100,7 @@ remove_pulled_images() {
 on_exit() {
   local code=$?
   trap - EXIT INT TERM
+  [[ -z "$child" ]] || kill "$child" 2>/dev/null || true
   if [[ -n "$current_project" ]]; then
     say "cleaning up $current_project"
     teardown "$current_project"
@@ -100,6 +123,27 @@ for row in "${rows[@]}"; do
   current_project="$project"
   dc() { docker compose -p "$project" -f "$compose_file" --profile tools "$@"; }
 
+  # Ready when /login answers; failed the moment the container stops (a version
+  # that rejects our configuration exits within seconds — don't wait minutes for it).
+  wait_for_overleaf() {
+    local deadline=$((SECONDS + 600)) state code
+    while (( SECONDS < deadline )); do
+      state="$(docker inspect --format '{{.State.Status}}' "$(dc ps -aq sharelatex)" 2>/dev/null || echo missing)"
+      if [[ "$state" != "running" ]]; then
+        echo "  the Overleaf container is '$state', not running"
+        return 1
+      fi
+      code="$(dc exec -T sharelatex curl -s -o /dev/null -w '%{http_code}' http://localhost/login 2>/dev/null || true)"
+      if [[ "$code" == "200" || "$code" == "302" ]]; then
+        echo "  Overleaf is up (after ${SECONDS}s)"
+        return 0
+      fi
+      interruptible sleep 5
+    done
+    echo "  Overleaf did not answer on /login within 10 minutes"
+    return 1
+  }
+
   say "Overleaf CE $version — $image + $mongo + $redis (project $project)"
 
   for needed in "$image" "$mongo" "$redis" "$NODE_IMAGE"; do
@@ -120,12 +164,13 @@ for row in "${rows[@]}"; do
     echo "  isolation verified: no published ports, sandbox network is internal"
 
     echo "  preparing the test runner (npm ci + build, in a volume)"
-    if dc run --rm --no-deps -T prepare >/dev/null; then
-      if dc run --rm --no-deps -T runner; then
-        status="PASS"
-      fi
-    else
+    if ! interruptible dc run --rm --no-deps -T prepare >/dev/null; then
       echo "  prepare step failed"
+    elif ! wait_for_overleaf; then
+      echo "  --- the instance's own output ---"
+      dc logs --no-log-prefix --tail 40 sharelatex 2>/dev/null | grep -v '^[[:space:]]*$' | cut -c1-300 || true
+    elif interruptible dc run --rm --no-deps -T runner; then
+      status="PASS"
     fi
 
     # The server's own view: an OT error here means a client was (or would have been) kicked out of a doc.
@@ -157,6 +202,13 @@ say "summary"
 for result in "${results[@]}"; do printf '  %-8s %s\n' $result; done
 leftovers="$(docker ps -aq --filter "label=com.docker.compose.project" --filter "name=olmcp-live-" | wc -l | tr -d ' ')"
 echo "  leftover containers: $leftovers"
+volumes_after="$(dangling_volumes)"
+if [[ "$volumes_after" -le "$volumes_before" ]]; then
+  echo "  dangling volumes on the host: $volumes_after (was $volumes_before) — none added"
+else
+  echo "  WARNING: dangling volumes on the host went from $volumes_before to $volumes_after"
+  failed=1
+fi
 cache_after="$(build_cache)"
 if [[ "$cache_before" == "$cache_after" ]]; then
   echo "  build cache unchanged (${cache_after:-none})"
