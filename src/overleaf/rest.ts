@@ -64,6 +64,81 @@ export class OverleafRest {
     }))
   }
 
+  async createProject(
+    name: string,
+    template: 'blank' | 'example' = 'blank',
+  ): Promise<{ id: string }> {
+    const res = await this.http.postJson('/project/new', { projectName: name, template })
+    if (!res.ok) {
+      throw new OverleafError('OVERLEAF_GENERIC', `createProject returned ${res.status} for ${name}`)
+    }
+    const json = (await res.json()) as { project_id?: string }
+    if (!json.project_id) {
+      throw new OverleafError('OVERLEAF_GENERIC', 'createProject response missing project_id')
+    }
+    return { id: json.project_id }
+  }
+
+  async cloneProject(projectId: string, name: string): Promise<{ id: string }> {
+    const res = await this.http.postJson(
+      `/project/${encodeURIComponent(projectId)}/clone`,
+      { projectName: name },
+    )
+    if (!res.ok) {
+      throw new OverleafError('OVERLEAF_GENERIC', `cloneProject returned ${res.status} for ${projectId}`)
+    }
+    const json = (await res.json()) as { project_id?: string }
+    if (!json.project_id) {
+      throw new OverleafError('OVERLEAF_GENERIC', 'cloneProject response missing project_id')
+    }
+    return { id: json.project_id }
+  }
+
+  async renameProject(projectId: string, newName: string): Promise<void> {
+    const res = await this.http.postJson(
+      `/project/${encodeURIComponent(projectId)}/rename`,
+      { newProjectName: newName },
+    )
+    if (!res.ok) {
+      throw new OverleafError('OVERLEAF_GENERIC', `renameProject returned ${res.status} for ${projectId}`)
+    }
+  }
+
+  async archiveProject(projectId: string): Promise<void> {
+    const res = await this.http.postJson(`/project/${encodeURIComponent(projectId)}/archive`, {})
+    if (!res.ok) {
+      throw new OverleafError('OVERLEAF_GENERIC', `archiveProject returned ${res.status} for ${projectId}`)
+    }
+  }
+
+  async unarchiveProject(projectId: string): Promise<void> {
+    const res = await this.http.delete(`/project/${encodeURIComponent(projectId)}/archive`)
+    if (!res.ok) {
+      throw new OverleafError('OVERLEAF_GENERIC', `unarchiveProject returned ${res.status} for ${projectId}`)
+    }
+  }
+
+  async trashProject(projectId: string): Promise<void> {
+    const res = await this.http.postJson(`/project/${encodeURIComponent(projectId)}/trash`, {})
+    if (!res.ok) {
+      throw new OverleafError('OVERLEAF_GENERIC', `trashProject returned ${res.status} for ${projectId}`)
+    }
+  }
+
+  async untrashProject(projectId: string): Promise<void> {
+    const res = await this.http.delete(`/project/${encodeURIComponent(projectId)}/trash`)
+    if (!res.ok) {
+      throw new OverleafError('OVERLEAF_GENERIC', `untrashProject returned ${res.status} for ${projectId}`)
+    }
+  }
+
+  async deleteProject(projectId: string): Promise<void> {
+    const res = await this.http.delete(`/project/${encodeURIComponent(projectId)}`)
+    if (!res.ok) {
+      throw new OverleafError('OVERLEAF_GENERIC', `deleteProject returned ${res.status} for ${projectId}`)
+    }
+  }
+
   /**
    * A deliberate compile, not `?auto_compile=true`: that flag marks the
    * editor's compile-on-keystroke, which the server throttles per user and

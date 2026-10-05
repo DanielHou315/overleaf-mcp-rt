@@ -58,3 +58,85 @@ describe('OverleafRest.listProjects', () => {
   })
 })
 
+
+
+describe('OverleafRest project lifecycle', () => {
+  it('creates a blank or example project', async () => {
+    const seen: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('https://o.example/project/new', async ({ request }) => {
+        seen.push(await request.json() as Record<string, unknown>)
+        return HttpResponse.json({ project_id: seen.length === 1 ? 'new-blank' : 'new-example' })
+      }),
+    )
+
+    await expect(makeRest().createProject('Blank Paper')).resolves.toEqual({ id: 'new-blank' })
+    await expect(makeRest().createProject('Example Paper', 'example')).resolves.toEqual({ id: 'new-example' })
+    expect(seen).toEqual([
+      { projectName: 'Blank Paper', template: 'blank' },
+      { projectName: 'Example Paper', template: 'example' },
+    ])
+  })
+
+  it('clones and renames projects with the dashboard routes', async () => {
+    let cloneBody: Record<string, unknown> | undefined
+    let renameBody: Record<string, unknown> | undefined
+    server.use(
+      http.post('https://o.example/project/p1/clone', async ({ request }) => {
+        cloneBody = await request.json() as Record<string, unknown>
+        return HttpResponse.json({ project_id: 'p2' })
+      }),
+      http.post('https://o.example/project/p1/rename', async ({ request }) => {
+        renameBody = await request.json() as Record<string, unknown>
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+
+    await expect(makeRest().cloneProject('p1', 'Copy')).resolves.toEqual({ id: 'p2' })
+    await expect(makeRest().renameProject('p1', 'Renamed')).resolves.toBeUndefined()
+    expect(cloneBody).toEqual({ projectName: 'Copy' })
+    expect(renameBody).toEqual({ newProjectName: 'Renamed' })
+  })
+
+  it('archives, restores, trashes, restores, and permanently deletes projects', async () => {
+    const calls: string[] = []
+    server.use(
+      http.post('https://o.example/project/p1/archive', () => {
+        calls.push('archive')
+        return new HttpResponse(null, { status: 204 })
+      }),
+      http.delete('https://o.example/project/p1/archive', () => {
+        calls.push('unarchive')
+        return new HttpResponse(null, { status: 204 })
+      }),
+      http.post('https://o.example/project/p1/trash', () => {
+        calls.push('trash')
+        return new HttpResponse(null, { status: 204 })
+      }),
+      http.delete('https://o.example/project/p1/trash', () => {
+        calls.push('untrash')
+        return new HttpResponse(null, { status: 204 })
+      }),
+      http.delete('https://o.example/project/p1', () => {
+        calls.push('delete')
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+
+    const rest = makeRest()
+    await rest.archiveProject('p1')
+    await rest.unarchiveProject('p1')
+    await rest.trashProject('p1')
+    await rest.untrashProject('p1')
+    await rest.deleteProject('p1')
+
+    expect(calls).toEqual(['archive', 'unarchive', 'trash', 'untrash', 'delete'])
+  })
+
+  it('rejects malformed create responses', async () => {
+    server.use(
+      http.post('https://o.example/project/new', () => HttpResponse.json({})),
+    )
+    await expect(makeRest().createProject('Broken')).rejects.toThrow(/project_id/)
+  })
+})

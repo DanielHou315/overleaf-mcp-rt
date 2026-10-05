@@ -4,6 +4,11 @@ All notable changes to `overleaf-mcp-rt`. The format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Added
+
+- **Project lifecycle tools.** Agents can now create blank/example projects, clone and rename projects, archive/unarchive, trash/restore, and permanently delete projects through the same authenticated Overleaf session: `overleaf_create_project`, `overleaf_clone_project`, `overleaf_rename_project`, `overleaf_archive_project`, `overleaf_unarchive_project`, `overleaf_trash_project`, `overleaf_untrash_project`, and `overleaf_delete_project`.
+
+
 ## [2.2.0] — 2026-09-20
 
 Projects that Overleaf has moved to its newer document format (history-OT) no longer fail to open: they can be read, and edited if you opt in. Nothing changes for classic projects — which today is every project most people have.

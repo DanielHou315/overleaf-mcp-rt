@@ -4,7 +4,18 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 import type { ServerContext } from '../server.js'
-import { handleListProjects, handleGetProjectTree } from './projects.js'
+import {
+  handleListProjects,
+  handleCreateProject,
+  handleCloneProject,
+  handleRenameProject,
+  handleArchiveProject,
+  handleUnarchiveProject,
+  handleTrashProject,
+  handleUntrashProject,
+  handleDeleteProject,
+  handleGetProjectTree,
+} from './projects.js'
 import { handleReadDoc, handleReadFile, handleWriteDoc } from './docs.js'
 import { handleEditDoc } from './edit.js'
 import { handleAddComment, handleListComments, handleReplyComment, handleResolveComment } from './comments.js'
@@ -34,6 +45,91 @@ const TOOL_DEFINITIONS = [
     name: 'overleaf_list_projects',
     description: 'List Overleaf projects accessible to the configured account.',
     inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'overleaf_create_project',
+    description: 'Create a new Overleaf project. template="none" creates a blank project; template="example" creates Overleaf\'s example project.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', minLength: 1 },
+        template: { type: 'string', enum: ['blank', 'example'] },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'overleaf_clone_project',
+    description: 'Duplicate an existing Overleaf project under a new name.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        name: { type: 'string', minLength: 1 },
+      },
+      required: ['projectId', 'name'],
+    },
+  },
+  {
+    name: 'overleaf_rename_project',
+    description: 'Rename an Overleaf project.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        newName: { type: 'string', minLength: 1 },
+      },
+      required: ['projectId', 'newName'],
+    },
+  },
+  {
+    name: 'overleaf_archive_project',
+    description: 'Archive an Overleaf project. This is reversible with overleaf_unarchive_project.',
+    inputSchema: {
+      type: 'object',
+      properties: { projectId: { type: 'string' } },
+      required: ['projectId'],
+    },
+  },
+  {
+    name: 'overleaf_unarchive_project',
+    description: 'Restore an archived Overleaf project to the main project list.',
+    inputSchema: {
+      type: 'object',
+      properties: { projectId: { type: 'string' } },
+      required: ['projectId'],
+    },
+  },
+  {
+    name: 'overleaf_trash_project',
+    description: 'Move an Overleaf project to trash. This is reversible with overleaf_untrash_project.',
+    inputSchema: {
+      type: 'object',
+      properties: { projectId: { type: 'string' } },
+      required: ['projectId'],
+    },
+  },
+  {
+    name: 'overleaf_untrash_project',
+    description: 'Restore an Overleaf project from trash.',
+    inputSchema: {
+      type: 'object',
+      properties: { projectId: { type: 'string' } },
+      required: ['projectId'],
+    },
+  },
+  {
+    name: 'overleaf_delete_project',
+    description: 'Permanently delete an Overleaf project. This cannot be undone; prefer overleaf_trash_project unless permanent deletion was explicitly requested.',
+    inputSchema: {
+      type: 'object',
+      properties: { projectId: { type: 'string' } },
+      required: ['projectId'],
+    },
+    annotations: {
+      destructiveHint: true,
+      idempotentHint: true,
+    },
   },
   {
     name: 'overleaf_get_project_tree',
@@ -375,6 +471,37 @@ export function registerAllTools(server: Server, source: ContextSource) {
     switch (name) {
       case 'overleaf_list_projects':
         return wrap(await handleListProjects(ctx, args as Record<string, never>))
+      case 'overleaf_create_project':
+        return wrap(
+          await handleCreateProject(
+            ctx,
+            args as { name: string; template?: 'blank' | 'example' },
+          ),
+        )
+      case 'overleaf_clone_project':
+        return wrap(
+          await handleCloneProject(
+            ctx,
+            args as { projectId: string; name: string },
+          ),
+        )
+      case 'overleaf_rename_project':
+        return wrap(
+          await handleRenameProject(
+            ctx,
+            args as { projectId: string; newName: string },
+          ),
+        )
+      case 'overleaf_archive_project':
+        return wrap(await handleArchiveProject(ctx, args as { projectId: string }))
+      case 'overleaf_unarchive_project':
+        return wrap(await handleUnarchiveProject(ctx, args as { projectId: string }))
+      case 'overleaf_trash_project':
+        return wrap(await handleTrashProject(ctx, args as { projectId: string }))
+      case 'overleaf_untrash_project':
+        return wrap(await handleUntrashProject(ctx, args as { projectId: string }))
+      case 'overleaf_delete_project':
+        return wrap(await handleDeleteProject(ctx, args as { projectId: string }))
       case 'overleaf_get_project_tree':
         return wrap(await handleGetProjectTree(ctx, args as { projectId: string }))
       case 'overleaf_read_doc':

@@ -193,7 +193,7 @@ A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `P
 
 ## Tools
 
-22 MCP tools, all prefixed `overleaf_*` so they remain unambiguous in hosts that don't auto-namespace by server name. Every tool's error responses use the [structured error envelope](#error-envelope).
+30 MCP tools, all prefixed `overleaf_*` so they remain unambiguous in hosts that don't auto-namespace by server name. Every tool's error responses use the [structured error envelope](#error-envelope).
 
 ### Discovery & read
 
@@ -206,6 +206,19 @@ A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `P
 | `overleaf_check_changes(projectId)` | What collaborators changed since the agent's last tool call. The same report rides along on every other tool result (see [Working alongside humans](#working-alongside-humans)), so this is only for polling. |
 | `overleaf_read_doc_range(projectId, path, startLine?, endLine?, startOffset?, length?)` | Substring of a doc by 1-indexed inclusive line range or by char offset/length. Returns `totalLines` / `totalChars`. Use this to verify a small region after an edit instead of re-fetching the whole doc. |
 | `overleaf_read_file(projectId, path, as?)` | Binary file. Default `as=auto`: native MCP image content for image MIMEs, text content for text MIMEs, resource for PDFs, base64 envelope otherwise. Pass `as=base64` to force the `{contentBase64, mimeType}` envelope for any type — useful for programmatic copy via `overleaf_upload_file`. |
+
+### Project management
+
+| Tool | Purpose |
+|---|---|
+| `overleaf_create_project(name, template?)` | Create a blank project (`template="blank"`, default) or Overleaf's example project (`template="example"`). Returns the new project id. |
+| `overleaf_clone_project(projectId, name)` | Duplicate a project under a new name. Returns the new project id. |
+| `overleaf_rename_project(projectId, newName)` | Rename a project. |
+| `overleaf_archive_project(projectId)` | Archive a project; reversible with `overleaf_unarchive_project`. |
+| `overleaf_unarchive_project(projectId)` | Restore an archived project. |
+| `overleaf_trash_project(projectId)` | Move a project to trash; reversible with `overleaf_untrash_project`. |
+| `overleaf_untrash_project(projectId)` | Restore a trashed project. |
+| `overleaf_delete_project(projectId)` | **Permanently delete a project.** This cannot be undone; prefer trash unless permanent deletion was explicitly requested. |
 
 ### Edit
 

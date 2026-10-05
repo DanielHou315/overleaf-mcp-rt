@@ -6,7 +6,18 @@ import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildContext } from '../../src/mcp/server.js'
-import { handleListProjects, handleGetProjectTree } from '../../src/mcp/tools/projects.js'
+import {
+  handleListProjects,
+  handleCreateProject,
+  handleCloneProject,
+  handleRenameProject,
+  handleArchiveProject,
+  handleUnarchiveProject,
+  handleTrashProject,
+  handleUntrashProject,
+  handleDeleteProject,
+  handleGetProjectTree,
+} from '../../src/mcp/tools/projects.js'
 import { handleReadDoc, handleReadFile, handleWriteDoc } from '../../src/mcp/tools/docs.js'
 import {
   handleCompile,
@@ -88,6 +99,64 @@ describe('list_projects tool', () => {
     const out = await handleListProjects(ctx, {})
     expect(out.projects).toHaveLength(2)
     expect(out.projects[0]).toMatchObject({ id: 'p1', name: 'Thesis' })
+  })
+})
+
+describe('project lifecycle tools', () => {
+  it('returns stable project ids and names for create/clone/rename', async () => {
+    server.use(
+      http.post('https://o.example/project/new', () =>
+        HttpResponse.json({ project_id: 'p-new' }),
+      ),
+      http.post('https://o.example/project/p1/clone', () =>
+        HttpResponse.json({ project_id: 'p-copy' }),
+      ),
+      http.post('https://o.example/project/p1/rename', () =>
+        new HttpResponse(null, { status: 204 }),
+      ),
+    )
+
+    await expect(handleCreateProject(ctx, { name: 'Paper' })).resolves.toEqual({
+      projectId: 'p-new',
+      name: 'Paper',
+      template: 'blank',
+    })
+    await expect(handleCloneProject(ctx, { projectId: 'p1', name: 'Copy' })).resolves.toEqual({
+      projectId: 'p-copy',
+      sourceProjectId: 'p1',
+      name: 'Copy',
+    })
+    await expect(handleRenameProject(ctx, { projectId: 'p1', newName: 'Renamed' })).resolves.toEqual({
+      ok: true,
+      projectId: 'p1',
+      name: 'Renamed',
+    })
+  })
+
+  it('returns success envelopes for archive/trash/delete operations', async () => {
+    server.use(
+      http.post('https://o.example/project/p1/archive', () =>
+        new HttpResponse(null, { status: 204 }),
+      ),
+      http.delete('https://o.example/project/p1/archive', () =>
+        new HttpResponse(null, { status: 204 }),
+      ),
+      http.post('https://o.example/project/p1/trash', () =>
+        new HttpResponse(null, { status: 204 }),
+      ),
+      http.delete('https://o.example/project/p1/trash', () =>
+        new HttpResponse(null, { status: 204 }),
+      ),
+      http.delete('https://o.example/project/p1', () =>
+        new HttpResponse(null, { status: 204 }),
+      ),
+    )
+
+    await expect(handleArchiveProject(ctx, { projectId: 'p1' })).resolves.toEqual({ ok: true, projectId: 'p1' })
+    await expect(handleUnarchiveProject(ctx, { projectId: 'p1' })).resolves.toEqual({ ok: true, projectId: 'p1' })
+    await expect(handleTrashProject(ctx, { projectId: 'p1' })).resolves.toEqual({ ok: true, projectId: 'p1' })
+    await expect(handleUntrashProject(ctx, { projectId: 'p1' })).resolves.toEqual({ ok: true, projectId: 'p1' })
+    await expect(handleDeleteProject(ctx, { projectId: 'p1' })).resolves.toEqual({ ok: true, projectId: 'p1' })
   })
 })
 
