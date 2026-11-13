@@ -1,5 +1,5 @@
 import type { ServerContext } from '../server.js'
-import type { TreeNode } from '../../overleaf/ot.js'
+import type { ProjectSettings, TreeNode } from '../../overleaf/ot.js'
 
 export async function handleListProjects(
   ctx: ServerContext,
@@ -12,7 +12,7 @@ export async function handleListProjects(
 export async function handleGetProjectTree(
   ctx: ServerContext,
   input: { projectId: string },
-): Promise<{ tree: TreeNode }> {
+): Promise<{ tree: TreeNode } & ProjectSettings> {
   const engine = await ctx.ot.get(input.projectId)
-  return { tree: engine.getTree() }
+  return { ...engine.getProjectSettings(), tree: engine.getTree() }
 }

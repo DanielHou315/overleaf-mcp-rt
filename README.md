@@ -100,7 +100,7 @@ Skills are short instructions that an agent loads only when it needs them. They 
 |---|---|
 | `overleaf-setup` | Installing, logging in, multiple hosts, and what each auth or config error means. |
 | `overleaf-editing` | Making small, exact edits that fit around what people are typing. |
-| `overleaf-latex-workflow` | Finding the root file, compiling, reading the log, and leaving the project building. |
+| `overleaf-latex-workflow` | Finding the main document, compiling, reading the errors, and leaving the project building. |
 | `overleaf-comments` | When to comment instead of edit, and how to sign, reply to and resolve comments. |
 
 The plugin installs them, along with the `/overleaf-login` and `/overleaf-status` commands. Without the plugin, copy them into your agent's skills directory:
@@ -113,7 +113,7 @@ They are plain `SKILL.md` folders in [`skills/`](skills/), written for any agent
 
 ## Tools
 
-There are 22 tools. Each takes an optional `host`. The [tool reference](docs/tools.md) covers edit matching, what comes back, and the error codes.
+There are 22 tools. Each takes an optional `host`. The [tool reference](docs/tools.md) covers edit matching, compiling, what comes back, and the error codes.
 
 **Discover and read**
 
@@ -121,7 +121,7 @@ There are 22 tools. Each takes an optional `host`. The [tool reference](docs/too
 |---|---|
 | `overleaf_list_hosts` | The Overleaf instances you are logged in to. |
 | `overleaf_list_projects` | Your projects. |
-| `overleaf_get_project_tree` | A project's folders and files. |
+| `overleaf_get_project_tree` | A project's folders and files, and how it is set up to compile. |
 | `overleaf_read_doc` | The live text of a document. |
 | `overleaf_read_doc_range` | Part of a document, by lines or by offset. |
 | `overleaf_read_file` | A binary file, such as an image or a PDF. |
@@ -158,8 +158,8 @@ There are 22 tools. Each takes an optional `host`. The [tool reference](docs/too
 
 | Tool | Purpose |
 |---|---|
-| `overleaf_compile` | Compile the project. |
-| `overleaf_read_compile_log` | Compile and return the log. |
+| `overleaf_compile` | Compile the project, or one file, and report errors and warnings. |
+| `overleaf_read_compile_log` | Compile and return the full log. |
 | `overleaf_download_pdf` | Compile and return the PDF. |
 
 ## Supported Overleaf servers

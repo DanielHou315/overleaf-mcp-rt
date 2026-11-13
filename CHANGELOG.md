@@ -4,6 +4,16 @@ All notable changes to `overleaf-mcp-rt`. The format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Fixed
+
+- **Compiling a project whose main document is not `main.tex` compiled the wrong file — in practice, nothing.** Every compile request carried a hardcoded `rootResourcePath: "main.tex"`. Current Overleaf (overleaf.com, and Community Edition / Server Pro as they pick the change up) compiles exactly the path it is given, so `overleaf_compile`, `overleaf_read_compile_log` and `overleaf_download_pdf` answered `failure` with an "Emergency stop" log for any project built from `paper.tex`, `thesis.tex`, …, and for one with a stray `main.tex` they built that instead of the paper. The server now sends what the editor sends: the project's own main document, by id and by path, read from the live project state (so it follows renames, moves and a collaborator changing the setting). Reproduced, and the fix verified, on overleaf.com (a project built from `paper.tex`: `failure` before, a 36-page PDF after); servers that predate the field ignore it and use the project's setting.
+
+### Added
+
+- **`rootDoc` on `overleaf_compile`, `overleaf_read_compile_log` and `overleaf_download_pdf`**: compile a particular file (`"talks/slides.tex"`, a chapter that stands on its own) instead of the project's main document, for that call only — the editor's behaviour when a file with `\documentclass` is open. A path that is not a text document of the project is refused (`NOT_FOUND`) before anything is compiled.
+- **`overleaf_get_project_tree` reports how the project is set up to compile**: `rootDoc` (the main document's path; `null` if none is set), `compiler` and `imageName` (TeX Live release). Changes made in someone's editor menu arrive live and are announced in `<external-changes>`.
+- **`overleaf_compile` says how the build went, not just where its files are**: the `rootDoc` it compiled, `compiler`, `outputFiles`, and the `errors` and `warnings` from `output.log` with project file, line and the offending source text (capped at 20 each, with `errorCount` / `warningCount`). Every status other than `success` carries a `message` explaining why there is no PDF (`failure`, `validation-problems` when the project has no main document, `timedout`, `compile-in-progress`, …). `overleaf_read_compile_log` now also returns `status` and `rootDoc`. All additions to existing results; nothing was removed.
+
 ### Changed
 
 - Documentation reorganised. The README is now a short getting-started guide; login and configuration details, the tool reference (edit matching, `<external-changes>`, error codes) and contributor notes moved to `docs/configuration.md`, `docs/tools.md` and `docs/development.md`. `AGENTS.md` is now the single contributor guide (`CLAUDE.md` is gone). The `HISTORY_OT_WRITES_DISABLED` hint points at the new location.

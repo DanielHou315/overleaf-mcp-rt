@@ -16,7 +16,7 @@ The unit tests run the engine against a protocol-faithful fake. This directory c
 | Two clients fire overlapping replacements at the same version and must end identical; then the one overlap where the two protocols' algorithms disagree (an insert inside text the other side replaced) is built on purpose, 24 times, swapping roles and firing order, comparing all three views after every round | predicting the server's transform of an in-flight op with the wrong algorithm. Negative-controlled: with the ShareJS transform forced onto history-OT docs this scenario fails on a real server (`ipAXYm` vs the server's `ipXYAm`); random overlaps alone did not catch it |
 | `overleaf_write_doc` refuses to clobber unseen text, `overwrite: true` forces it | external-change tracking against real broadcasts |
 | Binary upload and read-back | upload route / file-store differences |
-| Compile, log, PDF | compile API and output-file URL changes |
+| Compile, log, PDF; the project's main document is the one compiled; a second document in a folder compiled via `rootDoc`, its error reported with project path and line | compile API and output-file URL changes; how the server chooses the root file; where TeX runs relative to it |
 | Comments: full lifecycle where a review panel exists, `COMMENTS_UNSUPPORTED` and an untouched doc where it doesn't | Server Pro / overleaf.com vs stock CE detection |
 
 For the matrix, `run-matrix.sh` also greps the instance's own `real-time` and `document-updater` logs for OT errors and fails the version if there are any — the server's view, not just ours.

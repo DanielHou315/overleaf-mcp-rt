@@ -25,6 +25,14 @@ export interface TreeNode {
   folders: Record<string, TreeNode>
 }
 
+/** How the project is set up to compile, as the editor's settings menu shows it. */
+export interface ProjectSettings {
+  /** Path of the project's main document, or null if none is set (or it no longer exists). */
+  rootDoc: string | null
+  compiler: string | null
+  imageName: string | null
+}
+
 export interface DocBaseline {
   docId: string
   /** Which wire format the server speaks for this doc (see history-ot.ts). Text and ops here are always ShareJS-style. */
@@ -371,6 +379,22 @@ export class OtEngine {
     if (!this.project) return root
     this.populateTreeNode(root, this.project.rootFolder[0]!)
     return root
+  }
+
+  /**
+   * The project's compile settings. Live: the server broadcasts changes made
+   * in anyone's settings menu, and renames/moves of the main document are
+   * followed because it is held by id.
+   */
+  getProjectSettings(): ProjectSettings {
+    const project = this.project
+    const rootDocId = project?.rootDoc_id
+    const rootDoc = rootDocId ? this.idToPath(String(rootDocId)) : null
+    return {
+      rootDoc: rootDoc !== null && this.pathIndex.get(rootDoc)?.kind === 'doc' ? rootDoc : null,
+      compiler: project?.compiler ?? null,
+      imageName: project?.imageName ?? null,
+    }
   }
 
   /**
@@ -883,6 +907,26 @@ export class OtEngine {
     this.installListener('removeEntity', (entityId: unknown) =>
       this.applyRemove(entityId as string),
     )
+    // Project settings (EditorController.setRootDoc / setCompiler / setImageName).
+    // Nothing here changes them, so every one of these is somebody else's doing.
+    this.installListener('rootDocUpdated', (rootDocId: unknown) => {
+      const project = this.getProject()
+      if (!project || typeof rootDocId !== 'string' || project.rootDoc_id === rootDocId) return
+      project.rootDoc_id = rootDocId
+      this.treeEvents.push(`main document set to ${this.idToPath(rootDocId) ?? rootDocId}`)
+    })
+    this.installListener('compilerUpdated', (compiler: unknown) => {
+      const project = this.getProject()
+      if (!project || typeof compiler !== 'string' || project.compiler === compiler) return
+      project.compiler = compiler
+      this.treeEvents.push(`compiler set to ${compiler}`)
+    })
+    this.installListener('imageNameUpdated', (imageName: unknown) => {
+      const project = this.getProject()
+      if (!project || typeof imageName !== 'string' || project.imageName === imageName) return
+      project.imageName = imageName
+      this.treeEvents.push(`TeX Live image set to ${imageName}`)
+    })
   }
 
   private applyNewEntity(

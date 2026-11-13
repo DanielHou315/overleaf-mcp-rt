@@ -49,7 +49,8 @@ src/errors.ts               Error codes, envelope and hints
 src/skills.ts               Lists / installs the bundled skills
 src/mcp/server.ts           HostRegistry (one lazily-built context per host), MCP server + instructions
 src/mcp/changes.ts          Renders the <external-changes> block
-src/mcp/tools/              Tool schemas + dispatcher (index.ts) and handlers
+src/mcp/tools/              Tool schemas + dispatcher (index.ts) and handlers; latex-log.ts reads
+                            errors / warnings out of output.log for the compile result
 src/overleaf/ot.ts          OtEngine: live snapshot per doc, in-flight transform, confirmation,
                             external-change tracking, comment anchors, reconnect
 src/overleaf/text-ot.ts     Port of the server's ShareJS text type (apply + transform)
@@ -62,9 +63,9 @@ test/live/                  the built server against real Overleaf (CE version m
 
 Do **not** add a `.mcp.json` at the root: the plugin host would load it both as this project's config and as the plugin's (see `docs/development.md`).
 
-## OT protocol facts
+## Protocol facts
 
-Read these before touching `src/overleaf/ot.ts`. All were verified against the Overleaf 6.0.0 source; the authoritative reference is the running server's own code (`docker exec <container> ls /overleaf/services/{real-time,document-updater,web}`).
+Read these before touching `src/overleaf/ot.ts` or the compile request. All were verified against the Overleaf 6.0.0 source; the authoritative reference is the running server's own code (`docker exec <container> ls /overleaf/services/{real-time,document-updater,web}`).
 
 - The `applyOtUpdate` ack means "queued", not "applied". Confirmation is a later `otUpdateApplied {doc, v}` with no `op`; rejection is `otUpdateError`.
 - Remote ops arrive as `otUpdateApplied` with `op`; `v` is the version the op was applied *at*.
@@ -74,6 +75,7 @@ Read these before touching `src/overleaf/ot.ts`. All were verified against the O
 - The two types use **different transform algorithms that disagree on some overlaps** (our insert inside a range someone replaced). Predict the in-flight op with the algorithm of the doc's type: `text-ot.ts` for ShareJS, `TextOperation.transform` for history-ot. `history-ot.test.ts` pins the counter-example.
 - For history-ot docs, document-updater (6.0 – 6.3) does **not** restamp a transformed update: broadcasts and acks carry the version the sender *submitted* at. The engine therefore sequences history-ot updates by arrival order (`inSequence` in `ot.ts`), relies on the text operation's length check to turn a missed update into a rejoin, and re-joins when an update crossing a join can't be placed.
 - history-ot **writes are opt-in** (`OVERLEAF_HISTORY_OT_WRITES=1`), because the format is unverified on overleaf.com. The first write per doc is verified against a fresh snapshot (`HISTORY_OT_MISMATCH` stops further writes). Flip the default only after a verified run on a migrated overleaf.com project.
+- The compile request must name the root document the way the editor does (`rootDoc_id` + `rootResourcePath`, both from the live project state), or neither. Current web compiles a `rootResourcePath` exactly as given — a hardcoded `main.tex` once broke every project built from another file — while older releases read only `rootDoc_id`. TeX runs in the root document's folder (`latexmk -cd`), so file names in `output.log` are relative to it.
 
 ## Testing
 

@@ -1,12 +1,13 @@
 # Tool reference
 
-The [README](../README.md#tools) lists every tool. This page covers the details: how edits are matched, what comes back, how collaborators' changes are reported, the comment signature, and the error envelope.
+The [README](../README.md#tools) lists every tool. This page covers the details: how edits are matched, what comes back, how collaborators' changes are reported, the comment signature, compiling, and the error envelope.
 
 - [Editing with `overleaf_edit_doc`](#editing-with-overleaf_edit_doc)
 - [Whole-document writes](#whole-document-writes)
 - [Reading files](#reading-files)
 - [Working alongside humans: `<external-changes>`](#working-alongside-humans-external-changes)
 - [Comments and the signature rule](#comments-and-the-signature-rule)
+- [Compiling](#compiling)
 - [Error envelope](#error-envelope)
 
 All tools are prefixed `overleaf_` so they stay unambiguous in clients that don't namespace by server, and all take an optional `host` (see [Multiple hosts](configuration.md#multiple-hosts)).
@@ -40,6 +41,7 @@ Legacy v1.1 edits carrying a `mode` field (`replace`, `insert_before`, `insert_a
 
 ## Reading files
 
+- `overleaf_get_project_tree` returns the folder and file tree, plus how the project is set up to compile: `rootDoc` (path of its main document, `null` if none is set), `compiler` and `imageName` (TeX Live release; `null` on a stock Community Edition).
 - `overleaf_read_doc` returns the live text: it reflects collaborators' keystrokes up to the instant of the call.
 - `overleaf_read_doc_range` returns part of a doc, by 1-indexed inclusive line range (`startLine`, `endLine`) or by character `startOffset` / `length`, along with `totalLines` and `totalChars`. Use it to check a small region after an edit instead of re-fetching the doc.
 - `overleaf_read_file` reads a binary file. With the default `as: "auto"` it returns native MCP image content for images, text for text types, a resource for PDFs, and a base64 envelope otherwise. `as: "base64"` forces the `{contentBase64, mimeType}` envelope for any type, which is what `overleaf_upload_file` takes.
@@ -75,6 +77,39 @@ The comment tools work on overleaf.com and Server Pro. Stock Community Edition h
 - `overleaf_resolve_comment` resolves a thread, or reopens it with `resolved: false`.
 
 **Signature.** Comments are posted through the logged-in Overleaf account — on overleaf.com usually the person's own — so Overleaf shows that person as the author. To keep the agent's words distinguishable from theirs, every agent comment ends with `Co-authored by <agent name>`. The server enforces this: `agentName` is required and the line is appended for the agent (never doubled). `omitSignature: true` is for when the user has explicitly asked for unsigned comments.
+
+## Compiling
+
+`overleaf_compile`, `overleaf_read_compile_log` and `overleaf_download_pdf` each run a compile. The first reports how it went, the second returns the complete `output.log` text (with `status` and `rootDoc`), and the third returns the PDF as an MCP resource.
+
+**Which file gets compiled.** By default the project's *main document* — the one set in the editor's menu, whatever it is called — exactly as the Recompile button does. Pass `rootDoc` (a path, such as `"talks/slides.tex"`) to compile another file for that one call. The project's setting is not changed, and a path that is not a text document of the project is refused with `NOT_FOUND` before anything is compiled. If the project has no main document, the choice is the server's: it looks for a file with `\documentclass`, and may record it as the project's main document, as it does when the project is opened in the editor. The result still says which file was compiled.
+
+**What `overleaf_compile` returns.**
+
+```json
+{
+  "status": "success",
+  "rootDoc": "paper.tex",
+  "compiler": "pdflatex",
+  "outputFiles": ["output.pdf", "output.log", "output.bbl", "…"],
+  "errors": [
+    { "file": "sections/method.tex", "line": 42, "message": "Undefined control sequence.", "context": "where \\mathbbm" }
+  ],
+  "warnings": [
+    { "file": "paper.tex", "line": 15, "message": "Citation `knuth84' on page 1 undefined on input line 15." }
+  ],
+  "errorCount": 1,
+  "warningCount": 1,
+  "pdfUrl": "/project/…/output/output.pdf",
+  "logUrl": "/project/…/output/output.log"
+}
+```
+
+- `status: "success"` means a PDF was produced. LaTeX recovers from many errors, so check `errorCount` too.
+- Any other status (`failure`, `validation-problems`, `timedout`, `compile-in-progress`, `too-recently-compiled`, `project-too-large`, …) comes with a `message` saying why there is no PDF.
+- `errors` and `warnings` are read from `output.log` and capped at 20 each; the counts are totals. `file` is a project path, present when the log says which file TeX was reading.
+- Box warnings (`Overfull \hbox`) are left to the full log.
+- `draft` and `stopOnFirstError` are optional flags on `overleaf_compile`.
 
 ## Error envelope
 

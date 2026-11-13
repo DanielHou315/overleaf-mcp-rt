@@ -23,6 +23,25 @@ export interface CompileResponse {
   /** Which compile server holds this build's output (hosted / load-balanced instances). */
   clsiServerId?: string
   pdfDownloadDomain?: string
+  /** With status `validation-problems`: what the server refused to compile, keyed by kind (`mainFile`, `sizeCheck`, …). */
+  validationProblems?: Record<string, unknown>
+}
+
+/**
+ * Which document to compile. Both fields name the same doc: older servers
+ * read only `rootDocId`, newer ones (overleaf.com) also take the path and use
+ * it as given. Omit the whole thing and the server falls back to the
+ * project's own setting.
+ */
+export interface CompileRoot {
+  rootDocId: string
+  rootResourcePath: string
+}
+
+export interface CompileOptions {
+  draft?: boolean
+  stopOnFirstError?: boolean
+  root?: CompileRoot
 }
 
 /** Where a compile's output files are, as told by the compile response. */
@@ -74,7 +93,7 @@ export class OverleafRest {
    */
   async compile(
     projectId: string,
-    opts: { draft?: boolean; stopOnFirstError?: boolean; rootResourcePath?: string } = {},
+    opts: CompileOptions = {},
   ): Promise<CompileResponse> {
     const first = await this.compileOnce(projectId, opts)
     if (first.status !== 'too-recently-compiled') return first
@@ -85,17 +104,20 @@ export class OverleafRest {
   /** Just over the server's one-second window. Tests shorten it. */
   compileRetryDelayMs = 1200
 
-  private async compileOnce(
-    projectId: string,
-    opts: { draft?: boolean; stopOnFirstError?: boolean; rootResourcePath?: string },
-  ): Promise<CompileResponse> {
+  private async compileOnce(projectId: string, opts: CompileOptions): Promise<CompileResponse> {
+    // The body the editor sends (frontend compiler.ts). Never a made-up
+    // rootResourcePath: current servers compile exactly the path they are
+    // given, so a guessed "main.tex" builds the wrong file — or nothing — in
+    // every project whose main document is called something else.
     const res = await this.http.postJson(
       `/project/${encodeURIComponent(projectId)}/compile`,
       {
         check: 'silent',
         draft: opts.draft ?? false,
         incrementalCompilesEnabled: true,
-        rootResourcePath: opts.rootResourcePath ?? 'main.tex',
+        ...(opts.root
+          ? { rootDoc_id: opts.root.rootDocId, rootResourcePath: opts.root.rootResourcePath }
+          : {}),
         stopOnFirstError: opts.stopOnFirstError ?? false,
       },
     )
