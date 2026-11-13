@@ -144,7 +144,7 @@ Small, on-demand instructions that teach an agent to use these tools well. They 
 |---|---|
 | `overleaf-setup` | Installing, logging in (`--browser`), multiple hosts, `diagnose`, and what each auth/config error means. |
 | `overleaf-editing` | The read → `overleaf_edit_doc` loop, unique `old_string`s, small edits, reading `<external-changes>`, never reverting a human, why to avoid `overleaf_write_doc`. |
-| `overleaf-latex-workflow` | Finding the root file, matching project conventions, compile → read log → fix, leaving the project building, citations and figures. |
+| `overleaf-latex-workflow` | Finding the main document, matching project conventions, compile (the project or one file) → read errors → fix, leaving the project building, citations and figures. |
 | `overleaf-comments` | Comment vs. edit, the required `Co-authored by <agent name>` signature, replying and resolving, the fallback where comments don't exist. |
 
 Slash commands: `/overleaf-login` (walks the user through a browser login) and `/overleaf-status` (hosts, sessions, what to fix).
@@ -201,7 +201,7 @@ A `✗` on any step prints the underlying error code (`OVERLEAF_AUTH_FAILED`, `P
 |---|---|
 | `overleaf_list_hosts` | The Overleaf instances this server is logged in to, and which is the default. Every other tool accepts an optional `host` — see [Multiple hosts](#multiple-hosts). |
 | `overleaf_list_projects` | List accessible projects. |
-| `overleaf_get_project_tree(projectId)` | Folder + file tree (live, OT-backed). |
+| `overleaf_get_project_tree(projectId)` | Folder + file tree (live, OT-backed), plus how the project is set up to compile: `rootDoc` (path of its main document, `null` if none is set), `compiler`, `imageName` (TeX Live release; `null` on a stock Community Edition). |
 | `overleaf_read_doc(projectId, path)` | Full text doc content. Live: reflects collaborators' keystrokes up to the instant of the call. |
 | `overleaf_check_changes(projectId)` | What collaborators changed since the agent's last tool call. The same report rides along on every other tool result (see [Working alongside humans](#working-alongside-humans)), so this is only for polling. |
 | `overleaf_read_doc_range(projectId, path, startLine?, endLine?, startOffset?, length?)` | Substring of a doc by 1-indexed inclusive line range or by char offset/length. Returns `totalLines` / `totalChars`. Use this to verify a small region after an edit instead of re-fetching the whole doc. |
@@ -281,9 +281,34 @@ Review-panel comment threads, for feedback that belongs *next to* a passage rath
 
 | Tool | Purpose |
 |---|---|
-| `overleaf_compile(projectId, draft?, stopOnFirstError?)` | Trigger a LaTeX compile, return output URLs. |
-| `overleaf_read_compile_log(projectId)` | Compile and return `output.log` text. |
-| `overleaf_download_pdf(projectId)` | Compile and return the PDF as an MCP resource (`application/pdf`, base64 blob). |
+| `overleaf_compile(projectId, rootDoc?, draft?, stopOnFirstError?)` | Compile and report how it went: `status`, the `rootDoc` that was compiled, `compiler`, the log's `errors` and `warnings` with file and line, `outputFiles`. |
+| `overleaf_read_compile_log(projectId, rootDoc?)` | Compile and return the complete `output.log` text (with `status` and `rootDoc`). |
+| `overleaf_download_pdf(projectId, rootDoc?)` | Compile and return the PDF as an MCP resource (`application/pdf`, base64 blob). |
+
+**Which file gets compiled.** By default the project's *main document* — the one set in the editor's menu, whatever it is called — exactly as the Recompile button does. Pass `rootDoc` (a path, e.g. `"talks/slides.tex"`) to compile another file for that one call; the project's setting is not changed, and a path that is not a text document of the project is refused with `NOT_FOUND` before anything is compiled. If the project has no main document, the choice is the server's (it looks for a file with `\documentclass`, and may record it as the project's main document, as it does when the project is opened in the editor); the result still says which file was compiled.
+
+**What comes back.**
+
+```json
+{
+  "status": "success",
+  "rootDoc": "paper.tex",
+  "compiler": "pdflatex",
+  "outputFiles": ["output.pdf", "output.log", "output.bbl", "…"],
+  "errors": [
+    { "file": "sections/method.tex", "line": 42, "message": "Undefined control sequence.", "context": "where \\mathbbm" }
+  ],
+  "warnings": [
+    { "file": "paper.tex", "line": 15, "message": "Citation `knuth84' on page 1 undefined on input line 15." }
+  ],
+  "errorCount": 1,
+  "warningCount": 1,
+  "pdfUrl": "/project/…/output/output.pdf",
+  "logUrl": "/project/…/output/output.log"
+}
+```
+
+`status: "success"` means a PDF was produced — LaTeX recovers from many errors, so check `errorCount` too. Any other status (`failure`, `validation-problems`, `timedout`, `compile-in-progress`, `too-recently-compiled`, `project-too-large`, …) comes with a `message` saying why there is no PDF. `errors` and `warnings` are read from `output.log` and capped at 20 each (the counts are totals); `file` is a project path, present when the log says which file TeX was reading. Box warnings (`Overfull \hbox`) are left to the full log.
 
 ### Error envelope
 

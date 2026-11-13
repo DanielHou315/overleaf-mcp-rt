@@ -37,7 +37,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'overleaf_get_project_tree',
-    description: 'Return the file/folder tree of an Overleaf project.',
+    description: 'Return the file/folder tree of an Overleaf project, together with how it is set up to compile: rootDoc (the path of its main document — the file a compile starts from, which is not necessarily main.tex), compiler (pdflatex, xelatex, lualatex or latex) and imageName (the TeX Live release, where the instance has several). rootDoc is null if the project has no main document set.',
     inputSchema: {
       type: 'object',
       properties: { projectId: { type: 'string' } },
@@ -193,11 +193,12 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'overleaf_compile',
-    description: 'Trigger a LaTeX compile of an Overleaf project and return output URLs.',
+    description: 'Compile an Overleaf project and report how it went. By default the project\'s main document is compiled, as in the editor; pass rootDoc to compile another file instead. Returns status ("success" means a PDF was produced — possibly with errors LaTeX recovered from; anything else comes with a message saying why there is no PDF), rootDoc (the file that was compiled), compiler, the errors and warnings from the log with file and line (capped at 20 each; errorCount/warningCount are the totals), and outputFiles. Use overleaf_read_compile_log only when that summary is not enough.',
     inputSchema: {
       type: 'object',
       properties: {
         projectId: { type: 'string' },
+        rootDoc: { type: 'string', description: 'Path of the document to compile, e.g. "chapters/intro.tex" or "slides.tex". Omit to compile the project\'s main document (rootDoc in overleaf_get_project_tree). Only this compile is affected; the project\'s setting is not changed. The file must be compilable on its own (have \\documentclass).' },
         draft: { type: 'boolean' },
         stopOnFirstError: { type: 'boolean' },
       },
@@ -206,19 +207,25 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'overleaf_read_compile_log',
-    description: 'Compile an Overleaf project and return the output.log contents.',
+    description: 'Compile an Overleaf project (its main document, or rootDoc) and return the complete output.log — often tens of kilobytes. overleaf_compile already extracts the errors and warnings; read the full log when you need what surrounds them.',
     inputSchema: {
       type: 'object',
-      properties: { projectId: { type: 'string' } },
+      properties: {
+        projectId: { type: 'string' },
+        rootDoc: { type: 'string', description: 'Path of the document to compile, e.g. "chapters/intro.tex" or "slides.tex". Omit to compile the project\'s main document (rootDoc in overleaf_get_project_tree). Only this compile is affected; the project\'s setting is not changed. The file must be compilable on its own (have \\documentclass).' },
+      },
       required: ['projectId'],
     },
   },
   {
     name: 'overleaf_download_pdf',
-    description: 'Compile an Overleaf project and return the output.pdf as an MCP resource (mimeType: application/pdf, base64-encoded blob).',
+    description: 'Compile an Overleaf project (its main document, or rootDoc) and return the output.pdf as an MCP resource (mimeType: application/pdf, base64-encoded blob).',
     inputSchema: {
       type: 'object',
-      properties: { projectId: { type: 'string' } },
+      properties: {
+        projectId: { type: 'string' },
+        rootDoc: { type: 'string', description: 'Path of the document to compile, e.g. "chapters/intro.tex" or "slides.tex". Omit to compile the project\'s main document (rootDoc in overleaf_get_project_tree). Only this compile is affected; the project\'s setting is not changed. The file must be compilable on its own (have \\documentclass).' },
+      },
       required: ['projectId'],
     },
   },
@@ -421,13 +428,13 @@ export function registerAllTools(server: Server, source: ContextSource) {
         return wrap(
           await handleCompile(
             ctx,
-            args as { projectId: string; draft?: boolean; stopOnFirstError?: boolean },
+            args as { projectId: string; rootDoc?: string; draft?: boolean; stopOnFirstError?: boolean },
           ),
         )
       case 'overleaf_read_compile_log':
-        return wrap(await handleReadCompileLog(ctx, args as { projectId: string }))
+        return wrap(await handleReadCompileLog(ctx, args as { projectId: string; rootDoc?: string }))
       case 'overleaf_download_pdf': {
-        const args2 = args as { projectId: string }
+        const args2 = args as { projectId: string; rootDoc?: string }
         const result = await handleDownloadPdf(ctx, args2)
         return formatPdf(result, args2.projectId)
       }
