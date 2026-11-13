@@ -4,6 +4,10 @@ All notable changes to `overleaf-mcp-rt`. The format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation reorganised. The README is now a short getting-started guide; login and configuration details, the tool reference (edit matching, `<external-changes>`, error codes) and contributor notes moved to `docs/configuration.md`, `docs/tools.md` and `docs/development.md`. `AGENTS.md` is now the single contributor guide (`CLAUDE.md` is gone). The `HISTORY_OT_WRITES_DISABLED` hint points at the new location.
+
 ## [2.2.0] — 2026-09-20
 
 Projects that Overleaf has moved to its newer document format (history-OT) no longer fail to open: they can be read, and edited if you opt in. Nothing changes for classic projects — which today is every project most people have.

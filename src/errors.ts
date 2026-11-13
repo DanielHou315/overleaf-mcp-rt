@@ -169,7 +169,7 @@ const HINTS: Partial<Record<ErrorCode, string>> = {
   COMMENTS_UNSUPPORTED:
     'Comments are not available here: either this is a stock Community Edition (no review panel — overleaf.com and Server Pro have one), or the project uses Overleaf\'s newer document format (history-OT), where this server can read and edit text but not yet attach comments. Nothing was changed. Put the note in the text as a LaTeX comment (% ...) instead.',
   HISTORY_OT_WRITES_DISABLED:
-    'Tell the user: their project is on Overleaf\'s newer document format, which this tool can read but only edits when they opt in, by starting the MCP server with OVERLEAF_HISTORY_OT_WRITES=1 (see the README FAQ; first try it on a scratch file, ideally with nobody else in the doc). Until then, propose the change as text for them to paste.',
+    'Tell the user: their project is on Overleaf\'s newer document format, which this tool can read but only edits when they opt in, by starting the MCP server with OVERLEAF_HISTORY_OT_WRITES=1 (see docs/configuration.md in the project repository; first try it on a scratch file, ideally with nobody else in the doc). Until then, propose the change as text for them to paste.',
   HISTORY_OT_MISMATCH:
     'Stop editing this project and tell the user: after a write, Overleaf\'s copy of the document did not match what this tool expected, so its handling of the newer document format (history-OT) is wrong for this server. The document on Overleaf is intact as Overleaf stored it; re-read it to see the current text. Further writes to history-OT documents are refused for this session. Please report it.',
   DOC_NOT_READ:
