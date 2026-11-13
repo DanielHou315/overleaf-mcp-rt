@@ -1,6 +1,7 @@
-import { readFileSync, existsSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs'
+import { readFileSync, existsSync, writeFileSync, mkdirSync, chmodSync, renameSync, rmSync, rmdirSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, posix, win32 } from 'node:path'
 import { InvalidConfigError } from './errors.js'
 
 export interface Config {
@@ -45,9 +46,73 @@ interface CredentialsFile extends StoredHost {
   hosts?: Record<string, StoredHost>
 }
 
-/** `OVERLEAF_CREDENTIALS_FILE` relocates the credentials file (tests, sandboxes, separate profiles). */
-export const DEFAULT_CREDENTIALS_PATH =
-  process.env.OVERLEAF_CREDENTIALS_FILE ?? join(homedir(), '.config', 'overleaf-mcp-rt', 'credentials.json')
+const APP_DIR = 'overleaf-mcp-rt'
+const CREDENTIALS_FILE = 'credentials.json'
+
+export interface PlatformInfo {
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>
+  platform?: NodeJS.Platform
+  home?: string
+}
+
+/**
+ * Where the credentials file lives when nothing overrides it, following each
+ * platform's convention:
+ *
+ * - `$XDG_CONFIG_HOME/overleaf-mcp-rt/` whenever that variable holds an absolute
+ *   path (on any platform: setting it is an explicit request)
+ * - Windows: `%APPDATA%\overleaf-mcp-rt\`
+ * - macOS: `~/Library/Application Support/overleaf-mcp-rt/`
+ * - elsewhere: `~/.config/overleaf-mcp-rt/` (the XDG default)
+ */
+export function defaultCredentialsPath(info: PlatformInfo = {}): string {
+  const env = info.env ?? process.env
+  const platform = info.platform ?? process.platform
+  const home = info.home ?? homedir()
+  const p = platform === 'win32' ? win32 : posix
+  const xdg = env.XDG_CONFIG_HOME
+  // The XDG spec says a relative path here is invalid and must be ignored.
+  if (xdg && p.isAbsolute(xdg)) return p.join(xdg, APP_DIR, CREDENTIALS_FILE)
+  if (platform === 'win32') {
+    return p.join(env.APPDATA || p.join(home, 'AppData', 'Roaming'), APP_DIR, CREDENTIALS_FILE)
+  }
+  if (platform === 'darwin') {
+    return p.join(home, 'Library', 'Application Support', APP_DIR, CREDENTIALS_FILE)
+  }
+  return p.join(home, '.config', APP_DIR, CREDENTIALS_FILE)
+}
+
+/** Before 2.3 the file was at `~/.config/overleaf-mcp-rt/` on every platform. */
+export function legacyCredentialsPath(info: PlatformInfo = {}): string {
+  const p = (info.platform ?? process.platform) === 'win32' ? win32 : posix
+  return p.join(info.home ?? homedir(), '.config', APP_DIR, CREDENTIALS_FILE)
+}
+
+interface CredentialsLocation {
+  /** Where the file is written, and read from if it exists. */
+  path: string
+  /** The pre-2.3 location, when it differs: read as a fallback, removed once `path` is written. */
+  legacy?: string
+  /** True when `path` is our own per-user directory, whose permissions we manage. */
+  managed: boolean
+}
+
+/**
+ * An explicit path (an option, or `OVERLEAF_CREDENTIALS_FILE` — for tests,
+ * sandboxes, separate profiles) is used as given, with no fallback.
+ */
+function locateCredentials(explicit?: string): CredentialsLocation {
+  const override = explicit ?? process.env.OVERLEAF_CREDENTIALS_FILE
+  if (override) return { path: override, managed: false }
+  const path = defaultCredentialsPath()
+  const legacy = legacyCredentialsPath()
+  return { path, legacy: legacy === path ? undefined : legacy, managed: true }
+}
+
+/** The file to read: the current location, or the pre-2.3 one if only that exists. */
+function readablePath(loc: CredentialsLocation): string {
+  return !existsSync(loc.path) && loc.legacy && existsSync(loc.legacy) ? loc.legacy : loc.path
+}
 
 /** `https://www.overleaf.com` → `overleaf.com`; `https://tex.example.org:8443/x` → `tex.example.org`. */
 export function hostNameForUrl(url: string): string {
@@ -109,7 +174,7 @@ function normalizeUrl(url: string | undefined): string {
  */
 export function loadHosts(opts: LoadConfigOptions = {}): HostsConfig {
   const env = opts.env ?? process.env
-  const file = readCredentialsFile(opts.credentialsPath ?? DEFAULT_CREDENTIALS_PATH)
+  const file = readCredentialsFile(readablePath(locateCredentials(opts.credentialsPath)))
   const debug = env.OVERLEAF_DEBUG === '1' || env.OVERLEAF_DEBUG === 'true'
 
   let envHeaders: Record<string, string> | undefined
@@ -179,13 +244,21 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
   return config
 }
 
-/** Add or replace one host in the credentials file, upgrading a v1 file to v2. */
+/**
+ * Add or replace one host in the credentials file, upgrading a v1 file to v2
+ * and moving a file from the pre-2.3 location to the platform's own.
+ *
+ * The file holds session cookies, so it is never visible to other users, not
+ * even briefly: it is created with mode 0600 under a temporary name and renamed
+ * into place, which also means a crash can't leave a half-written file.
+ */
 export function saveHost(
   host: { name: string; url: string; sessionCookie: string; extraHeaders: Record<string, string> },
   opts: { credentialsPath?: string; makeDefault?: boolean } = {},
-): { path: string; isDefault: boolean } {
-  const path = opts.credentialsPath ?? DEFAULT_CREDENTIALS_PATH
-  const file = readCredentialsFile(path)
+): { path: string; isDefault: boolean; movedFrom?: string } {
+  const loc = locateCredentials(opts.credentialsPath)
+  const source = readablePath(loc)
+  const file = readCredentialsFile(source)
   const hosts = storedHosts(file)
   hosts[host.name] = {
     url: host.url,
@@ -194,8 +267,30 @@ export function saveHost(
   }
   const previousDefault = file.default && hosts[file.default] ? file.default : Object.keys(storedHosts(file))[0]
   const defaultName = opts.makeDefault || !previousDefault ? host.name : previousDefault
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, JSON.stringify({ default: defaultName, hosts }, null, 2))
-  chmodSync(path, 0o600)
-  return { path, isDefault: defaultName === host.name }
+
+  const dir = dirname(loc.path)
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  // mkdir's mode only applies to directories it creates; tighten our own if it predates this.
+  if (loc.managed) chmodSync(dir, 0o700)
+  const tmp = `${loc.path}.${randomBytes(6).toString('hex')}.tmp`
+  try {
+    writeFileSync(tmp, JSON.stringify({ default: defaultName, hosts }, null, 2), { mode: 0o600, flag: 'wx' })
+    renameSync(tmp, loc.path)
+  } catch (err) {
+    rmSync(tmp, { force: true })
+    throw err
+  }
+
+  let movedFrom: string | undefined
+  if (source !== loc.path) {
+    // Don't leave a second, soon-to-be-stale copy of the cookies behind.
+    rmSync(source, { force: true })
+    try {
+      rmdirSync(dirname(source)) // only succeeds if now empty
+    } catch {
+      /* other files there, or already gone */
+    }
+    movedFrom = source
+  }
+  return { path: loc.path, isDefault: defaultName === host.name, movedFrom }
 }

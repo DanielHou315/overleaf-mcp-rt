@@ -19,7 +19,7 @@ npx -y overleaf-mcp-rt login --url https://www.overleaf.com --name overleaf.com 
 - No prompts are asked when `--url` and `--browser` are both given, so it also runs from a non-interactive shell (for instance a harness's "run this command for me" prefix).
 - The first host becomes the default; add `--default` to change it.
 - Headless machine? `login --url … --cookie '<value>'` with the `overleaf_session2` (overleaf.com), `overleaf.sid` or `sharelatex.sid` cookie copied from browser devtools. Self-hosted instances without CAPTCHA also accept `--email`.
-- **Never ask the user to paste a password or cookie into the chat**, and never read `~/.config/overleaf-mcp-rt/credentials.json` yourself.
+- **Never ask the user to paste a password or cookie into the chat**, and never read the credentials file (`credentials.json` in the tool's config directory) yourself.
 
 A running MCP server picks up a new or refreshed login on the next tool call — no restart needed.
 

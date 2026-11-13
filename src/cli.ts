@@ -328,6 +328,7 @@ async function runLogin(argv: string[]) {
   const name = args.name ?? hostNameForUrl(url)
   const saved = saveHost({ name, url, sessionCookie, extraHeaders }, { makeDefault: args.makeDefault })
   stderr.write(`✓ Saved host "${name}"${saved.isDefault ? ' (default)' : ''} to ${saved.path}\n`)
+  if (saved.movedFrom) stderr.write(`  (credentials file moved from ${saved.movedFrom})\n`)
   rl.close()
 }
 

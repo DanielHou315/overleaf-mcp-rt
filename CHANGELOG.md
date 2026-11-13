@@ -4,6 +4,14 @@ All notable changes to `overleaf-mcp-rt`. The format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Changed
+
+- **The credentials file follows each platform's convention.** It now lives in `$XDG_CONFIG_HOME/overleaf-mcp-rt/` (default `~/.config/overleaf-mcp-rt/`) on Linux, `~/Library/Application Support/overleaf-mcp-rt/` on macOS and `%APPDATA%\overleaf-mcp-rt\` on Windows; an absolute `XDG_CONFIG_HOME` is honoured on every platform. Nothing to do when upgrading: a file at the old `~/.config/overleaf-mcp-rt/credentials.json` is still read, and the next `login` moves it to the new place (and says so). Versions before this one only look in the old place, so after that `login` they need `OVERLEAF_CREDENTIALS_FILE` to share the file. `OVERLEAF_CREDENTIALS_FILE` still overrides everything.
+
+### Fixed
+
+- The credentials file is created with mode 0600 from the start and renamed into place, instead of being written and then restricted — on a first `login` it could briefly be readable by other users of the machine, and an interrupted write could leave it truncated. Its directory is now 0700.
+
 ## [2.2.0] — 2026-09-20
 
 Projects that Overleaf has moved to its newer document format (history-OT) no longer fail to open: they can be read, and edited if you opt in. Nothing changes for classic projects — which today is every project most people have.
