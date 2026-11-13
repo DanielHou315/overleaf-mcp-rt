@@ -21,7 +21,7 @@ The unit tests run the engine against a protocol-faithful fake. This directory c
 
 For the matrix, `run-matrix.sh` also greps the instance's own `real-time` and `document-updater` logs for OT errors and fails the version if there are any — the server's view, not just ours.
 
-The "second client" is this project's OT engine on its own connection, not a browser. It proves the server accepted everything and both sides converged; it doesn't replace a look at a real browser tab when you change `src/overleaf/ot.ts` (see `CLAUDE.md` → Testing).
+The "second client" is this project's OT engine on its own connection, not a browser. It proves the server accepted everything and both sides converged; it doesn't replace a look at a real browser tab when you change `src/overleaf/ot.ts` (see `AGENTS.md` → Testing).
 
 ## 1. The version matrix (throw-away Community Edition instances)
 

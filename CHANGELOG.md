@@ -14,6 +14,10 @@ All notable changes to `overleaf-mcp-rt`. The format follows [Keep a Changelog](
 - **`overleaf_get_project_tree` reports how the project is set up to compile**: `rootDoc` (the main document's path; `null` if none is set), `compiler` and `imageName` (TeX Live release). Changes made in someone's editor menu arrive live and are announced in `<external-changes>`.
 - **`overleaf_compile` says how the build went, not just where its files are**: the `rootDoc` it compiled, `compiler`, `outputFiles`, and the `errors` and `warnings` from `output.log` with project file, line and the offending source text (capped at 20 each, with `errorCount` / `warningCount`). Every status other than `success` carries a `message` explaining why there is no PDF (`failure`, `validation-problems` when the project has no main document, `timedout`, `compile-in-progress`, …). `overleaf_read_compile_log` now also returns `status` and `rootDoc`. All additions to existing results; nothing was removed.
 
+### Changed
+
+- Documentation reorganised. The README is now a short getting-started guide; login and configuration details, the tool reference (edit matching, `<external-changes>`, error codes) and contributor notes moved to `docs/configuration.md`, `docs/tools.md` and `docs/development.md`. `AGENTS.md` is now the single contributor guide (`CLAUDE.md` is gone). The `HISTORY_OT_WRITES_DISABLED` hint points at the new location.
+
 ## [2.2.0] — 2026-09-20
 
 Projects that Overleaf has moved to its newer document format (history-OT) no longer fail to open: they can be read, and edited if you opt in. Nothing changes for classic projects — which today is every project most people have.
