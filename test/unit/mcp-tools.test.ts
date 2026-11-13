@@ -184,37 +184,40 @@ describe('write_doc tool (OT)', () => {
 describe('compile tool', () => {
   it('triggers compile and returns log + pdf URLs', async () => {
     server.use(
-      http.post('https://o.example/project/p4/compile', () =>
+      http.post('https://o.example/project/p1/compile', () =>
         HttpResponse.json({
           status: 'success',
           outputFiles: [
-            { path: 'output.pdf', url: '/project/p4/build/b/output/output.pdf', type: 'pdf' },
-            { path: 'output.log', url: '/project/p4/build/b/output/output.log', type: 'log' },
+            { path: 'output.pdf', url: '/project/p1/build/b/output/output.pdf', type: 'pdf' },
+            { path: 'output.log', url: '/project/p1/build/b/output/output.log', type: 'log' },
           ],
         }),
       ),
+      http.get('https://o.example/project/p1/build/b/output/output.log', () => HttpResponse.text('**main.tex\n')),
     )
-    const out = await handleCompile(ctx, { projectId: 'p4' })
+    const { ctx } = buildOtTestCtx()
+    const out = await handleCompile(ctx, { projectId: 'p1' })
     expect(out.status).toBe('success')
-    expect(out.logUrl).toBe('/project/p4/build/b/output/output.log')
-    expect(out.pdfUrl).toBe('/project/p4/build/b/output/output.pdf')
+    expect(out.logUrl).toBe('/project/p1/build/b/output/output.log')
+    expect(out.pdfUrl).toBe('/project/p1/build/b/output/output.pdf')
   })
 })
 
 describe('read_compile_log tool', () => {
   it('returns log text', async () => {
     server.use(
-      http.post('https://o.example/project/p5/compile', () =>
+      http.post('https://o.example/project/p1/compile', () =>
         HttpResponse.json({
           status: 'success',
-          outputFiles: [{ path: 'output.log', url: '/project/p5/build/b/output/output.log', type: 'log' }],
+          outputFiles: [{ path: 'output.log', url: '/project/p1/build/b/output/output.log', type: 'log' }],
         }),
       ),
-      http.get('https://o.example/project/p5/build/b/output/output.log', () =>
+      http.get('https://o.example/project/p1/build/b/output/output.log', () =>
         HttpResponse.text('LaTeX Warning: blah'),
       ),
     )
-    const out = await handleReadCompileLog(ctx, { projectId: 'p5' })
+    const { ctx } = buildOtTestCtx()
+    const out = await handleReadCompileLog(ctx, { projectId: 'p1' })
     expect(out.log).toContain('LaTeX Warning')
   })
 })
@@ -222,19 +225,20 @@ describe('read_compile_log tool', () => {
 describe('download_pdf tool', () => {
   it('returns the PDF bytes + contentType', async () => {
     server.use(
-      http.post('https://o.example/project/p6/compile', () =>
+      http.post('https://o.example/project/p1/compile', () =>
         HttpResponse.json({
           status: 'success',
-          outputFiles: [{ path: 'output.pdf', url: '/project/p6/build/b/output/output.pdf', type: 'pdf' }],
+          outputFiles: [{ path: 'output.pdf', url: '/project/p1/build/b/output/output.pdf', type: 'pdf' }],
         }),
       ),
-      http.get('https://o.example/project/p6/build/b/output/output.pdf', () =>
+      http.get('https://o.example/project/p1/build/b/output/output.pdf', () =>
         HttpResponse.arrayBuffer(new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer, {
           headers: { 'Content-Type': 'application/pdf' },
         }),
       ),
     )
-    const out = await handleDownloadPdf(ctx, { projectId: 'p6' })
+    const { ctx } = buildOtTestCtx()
+    const out = await handleDownloadPdf(ctx, { projectId: 'p1' })
     expect(out.bytes.toString('utf-8').startsWith('%PDF')).toBe(true)
     expect(out.contentType).toBe('application/pdf')
     expect(out.status).toBe('success')

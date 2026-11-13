@@ -23,7 +23,12 @@ export interface ConnectionAcceptedPayload {
 export interface ProjectEntity {
   _id: string
   name: string
-  rootDoc_id: string
+  /** The project's main document ("Main document" in the editor's settings). Unset on a project that never had one. */
+  rootDoc_id?: string | null
+  /** pdflatex | latex | xelatex | lualatex */
+  compiler?: string
+  /** TeX Live image the project compiles with, e.g. `texlive-full:2025.1`. Absent on a stock Community Edition. */
+  imageName?: string
   rootFolder: FolderEntity[]
   features?: Record<string, unknown>
   /** Used to attribute collaborators' edits by name. */

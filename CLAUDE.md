@@ -44,6 +44,7 @@ src/mcp/tools/              Tool schemas + dispatcher (index.ts) and handlers
   docs.ts, range.ts           reads, guarded whole-doc writes
   comments.ts                 review-panel comments + enforced signature
   tree.ts, compile.ts         REST-backed tools
+  latex-log.ts                errors / warnings out of output.log, for the compile result
 src/overleaf/ot.ts          OtEngine: live snapshot per doc, in-flight transform, confirmation,
                             external-change tracking, comment anchors, reconnect
 src/overleaf/text-ot.ts     Port of the server's ShareJS text type (apply + transform)
@@ -68,6 +69,7 @@ Protocol facts worth knowing before touching `ot.ts` (all verified against the O
 - The two types use **different transform algorithms that disagree on some overlaps** (our insert inside a range someone replaced). The in-flight op must be predicted with the algorithm of the doc's type: `text-ot.ts` for ShareJS, `TextOperation.transform` for history-ot. `history-ot.test.ts` pins the counter-example.
 - For history-ot docs document-updater (6.0 – 6.3) does **not** restamp a transformed update: broadcasts and acks carry the version the sender *submitted* at, not the one it was applied at. The engine therefore sequences history-ot updates by arrival order (`inSequence` in `ot.ts`), relies on the text operation's length check to turn a missed update into a rejoin, and re-joins when an update crossing a join can't be placed.
 - history-ot **writes are opt-in** (`OVERLEAF_HISTORY_OT_WRITES=1` → `historyOtWrites`), because the format is unverified on overleaf.com and a rejected op disconnects everyone in the doc; the first write per doc is verified against a fresh snapshot (`HISTORY_OT_MISMATCH` stops further writes). Flip the default only after a verified run on a migrated overleaf.com project.
+- The compile request must name the root document the way the editor does (`rootDoc_id` + `rootResourcePath`, both from the live project state), or neither. Current web compiles a `rootResourcePath` exactly as given — a hardcoded `main.tex` once broke every project built from another file — while older releases read only `rootDoc_id`. TeX runs in the root document's folder (`latexmk -cd`), so file names in `output.log` are relative to it.
 - Randomized tests must use `test/unit/prng.ts` and assert that the scenario they generate contains what they claim (stale ops, races): a one-line LCG overflows double precision in JavaScript and once left the core interleaving test almost empty.
 - The authoritative reference is the running server's own source: `docker exec <container> ls /overleaf/services/{real-time,document-updater,web}`.
 

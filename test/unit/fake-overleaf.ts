@@ -50,6 +50,8 @@ export class FakeOverleaf {
       restampVersions?: boolean
       /** history-ot: acknowledge agent ops but store a (same-length) variation — a server that disagrees with our model. */
       storesDifferently?: boolean
+      /** Project settings in the join response. `rootDocId: null` is a project with no main document. Default: `d1`, pdflatex. */
+      settings?: { rootDocId?: string | null; compiler?: string; imageName?: string }
       /** history-ot: comments in the snapshot, per doc id. */
       historyOtComments?: Record<string, Array<{ id: string; ranges: Array<{ pos: number; length: number }> }>>
     } = {},
@@ -86,7 +88,9 @@ export class FakeOverleaf {
       project: {
         _id: 'p1',
         name: 'Test',
-        rootDoc_id: 'd1',
+        rootDoc_id: this.opts.settings && 'rootDocId' in this.opts.settings ? this.opts.settings.rootDocId : 'd1',
+        compiler: this.opts.settings?.compiler ?? 'pdflatex',
+        ...(this.opts.settings?.imageName ? { imageName: this.opts.settings.imageName } : {}),
         rootFolder: [{
           _id: 'root',
           name: 'rootFolder',
