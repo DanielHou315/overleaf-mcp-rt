@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { prng } from '../unit/prng.js'
-import { acquireTarget, startAgent, joinAsHuman, freshRead, sleep, liveEnabled, isBootstrap, type Agent, type ProjectKind, type Target } from './helpers.js'
+import { acquireTarget, startAgent, joinAsHuman, freshRead, freshRanges, sleep, liveEnabled, isBootstrap, type Agent, type ProjectKind, type Target } from './helpers.js'
 
 /**
  * The live suite: the built server (`dist/cli.js`, over stdio) against a real
@@ -405,5 +405,87 @@ describe.skipIf(!liveEnabled || process.env.LIVE_PHASE === 'bootstrap').each(kin
     expect(after.text).toContain('worth discussing')
     expect((await agent.call('overleaf_resolve_comment', { projectId, path, threadId })).ok).toBe(true)
     expect(await freshRead(target, path)).toBe(body)
+  }, 120_000)
+
+  it('tracked changes are refused up front where nobody could review them', async () => {
+    const body = 'Nobody can review this.\n'
+    const path = await newDoc('tracked-refused.tex', body)
+    const edit = { projectId, path, trackChanges: true, edits: [{ old_string: 'Nobody', new_string: 'Somebody' }] }
+    const probe = await agent.call('overleaf_edit_doc', { ...edit, dryRun: true })
+    if (probe.ok) {
+      // A host with a review panel: the next test covers it. The matrix runs stock CE, which has none.
+      expect(isBootstrap, `a stock CE must refuse tracked changes: ${probe.text}`).toBe(false)
+      return
+    }
+    expect(probe.json.code, probe.text).toBe('TRACK_CHANGES_UNSUPPORTED')
+    if (isBootstrap && kind === 'sharejs-text-ot') expect(probe.json.message).toMatch(/no review panel/)
+    const refused = await agent.call('overleaf_edit_doc', edit)
+    expect(refused.json.code, refused.text).toBe('TRACK_CHANGES_UNSUPPORTED')
+    expect(await freshRead(target, path)).toBe(body)
+  }, 60_000)
+
+  it('tracked edits reach the doc\'s review ranges as a fresh connection sees them, a reworded sentence as whole words', async () => {
+    const body = 'Alpha beta gamma delta.\n'
+    const path = await newDoc('tracked.tex', body)
+    const insert = { projectId, path, trackChanges: true, edits: [{ old_string: 'Alpha beta', new_string: 'Alpha [café] beta' }] }
+    const remove = { projectId, path, trackChanges: true, edits: [{ old_string: ' gamma', new_string: '' }] }
+
+    // The suite's agent where the server has a review panel; on a throw-away CE, one with the
+    // test-only override, to check what the server records. Elsewhere there is nothing to check.
+    const supported = (await agent.call('overleaf_edit_doc', { ...insert, dryRun: true })).ok
+    if (!supported && !isBootstrap) return
+    const override = supported ? undefined : await startAgent(target, { env: { OVERLEAF_TRACK_CHANGES_SKIP_CHECK: '1' } })
+    const tracker = override ?? agent
+    try {
+      if (kind === 'history-ot') {
+        // The override never covers the newer format: the server would ignore meta.tc and store the edit untracked.
+        const still = await tracker.call('overleaf_edit_doc', insert)
+        expect(still.json.code, still.text).toBe('TRACK_CHANGES_UNSUPPORTED')
+        expect(await freshRead(target, path)).toBe(body)
+        return
+      }
+
+      const human = await joinAsHuman(target)
+      try {
+        const { id: docId } = await human.engine.waitForPath(path, 5000)
+        await human.engine.openDoc(docId)
+        const inserted = await tracker.call('overleaf_edit_doc', insert)
+        expect(inserted.ok, inserted.text).toBe(true)
+        expect(inserted.json.tracked).toBe(true)
+        await pace()
+        const removed = await tracker.call('overleaf_edit_doc', remove)
+        expect(removed.ok, removed.text).toBe(true)
+        expect(removed.json.tracked).toBe(true)
+        await sleep(1000)
+
+        const stored = await freshRanges(target, path)
+        // A tracked delete still takes the text out of the doc; the change keeps it.
+        expect(stored.text).toBe('Alpha [café] beta delta.\n')
+        expect(stored.changes, JSON.stringify(stored.changes)).toHaveLength(2)
+        expect(stored.changes).toMatchObject([{ op: { i: '[café] ', p: 6 } }, { op: { d: 'gamma ', p: 18 } }])
+        // Each id is its update's seed plus a counter, so a reused seed would show up as a duplicate.
+        for (const change of stored.changes) expect(change.id).toMatch(/^[0-9a-f]{24}$/)
+        expect(new Set(stored.changes.map((c) => c.id)).size).toBe(2)
+        expect(new Set(stored.changes.map((c) => c.metadata.user_id)).size).toBe(1)
+        // The person in the doc saw a co-author's suggestions arrive, and nothing else happened to them.
+        expect(human.otErrors).toEqual([])
+        expect(human.disconnects).toBe(0)
+        expect(human.engine.readDoc(docId)).toBe(stored.text)
+      } finally {
+        human.close()
+      }
+
+      const prose = await newDoc('tracked-words.tex', 'We propose a novel method.\n')
+      const reworded = await tracker.call('overleaf_edit_doc', {
+        projectId, path: prose, trackChanges: true, edits: [{ old_string: 'propose a novel method', new_string: 'introduce a new approach' }],
+      })
+      expect(reworded.ok, reworded.text).toBe(true)
+      await sleep(1000)
+      const words = await freshRanges(target, prose)
+      expect(words.text).toBe('We introduce a new approach.\n')
+      expect(words.changes.map((c) => c.op.i ?? c.op.d).sort()).toEqual(['approach', 'introduce', 'method', 'new', 'novel', 'propose'])
+    } finally {
+      await override?.close()
+    }
   }, 120_000)
 })
