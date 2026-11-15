@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { registerAllTools } from '../../src/mcp/tools/index.js'
-import { makeToolHarness } from './fake-overleaf.js'
+import { connectAgent, makeToolHarness } from './fake-overleaf.js'
 
 const DOC = [
   '\\section{Introduction}',
@@ -19,21 +15,7 @@ const DOC = [
 /** Everything an agent would see: a real MCP client talking to the real tool dispatcher. */
 async function agent(docs: Record<string, string>) {
   const harness = await makeToolHarness(docs)
-  const server = new Server({ name: 'test', version: '0' }, { capabilities: { tools: {} } })
-  registerAllTools(server, harness.ctx)
-  const client = new Client({ name: 'agent', version: '0' }, { capabilities: {} })
-  const [a, b] = InMemoryTransport.createLinkedPair()
-  await Promise.all([server.connect(a), client.connect(b)])
-  const call = async (name: string, args: Record<string, unknown>) => {
-    const res = await client.callTool({ name, arguments: { projectId: 'p1', ...args } })
-    const blocks = (res.content as Array<{ type: string; text: string }>).map((c) => c.text)
-    return {
-      isError: res.isError === true,
-      json: JSON.parse(blocks[0]!) as Record<string, any>,
-      external: blocks.slice(1).join('\n'),
-    }
-  }
-  return { ...harness, call }
+  return { ...harness, ...(await connectAgent(harness.ctx)) }
 }
 
 describe('agent + human editing the same doc', () => {
