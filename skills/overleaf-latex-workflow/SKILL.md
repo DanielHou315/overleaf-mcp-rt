@@ -1,6 +1,6 @@
 ---
 name: overleaf-latex-workflow
-description: Working practices for LaTeX projects on Overleaf - finding the root file, compiling, reading the log, fixing errors, and keeping a shared paper buildable. Use when asked to write or revise a paper, fix a compile error, add figures, tables, sections or citations, or check that an Overleaf project still builds.
+description: Working practices for LaTeX projects on Overleaf - finding the main document, compiling it or another file, reading the errors, fixing them, and keeping a shared paper buildable. Use when asked to write or revise a paper, fix a compile error, add figures, tables, sections or citations, or check that an Overleaf project still builds.
 ---
 
 # LaTeX workflow on Overleaf
@@ -9,7 +9,7 @@ Use the `overleaf-editing` skill for *how* to change text. This skill is about *
 
 ## Orient first
 
-- `overleaf_get_project_tree`, then read the root file (usually `main.tex`; otherwise the one with `\documentclass`). Follow its `\input` / `\include` / `\subfile` lines to see which file holds which section. Edit the file that actually contains the text.
+- `overleaf_get_project_tree` returns the file tree and `rootDoc`: the project's main document, the file a compile starts from. It is whatever the project's owner set — do not assume `main.tex`. (If `rootDoc` is `null` the project has none set; look for the file with `\documentclass`.) Read it and follow its `\input` / `\include` / `\subfile` lines to see which file holds which section. Edit the file that actually contains the text.
 - Match the project's conventions before writing: its macros (`\newcommand`s in the preamble), citation command (`\cite` / `\citep` / `\autocite`), label scheme (`fig:`, `sec:`, `eq:`), quote style, and whether it writes one sentence per line.
 - One sentence per line (where the project already does this) makes edits small and collaboration-friendly. Do **not** re-wrap or reformat paragraphs you were not asked to change — it rewrites lines other people are working on.
 
@@ -17,12 +17,14 @@ Use the `overleaf-editing` skill for *how* to change text. This skill is about *
 
 1. Before a non-trivial change, note whether the project builds: `overleaf_compile`.
 2. Make the change.
-3. `overleaf_compile` again. On failure, `overleaf_read_compile_log` and read from the **first** error (`! …` with an `l.<line>` marker); later errors are usually fallout.
+3. `overleaf_compile` again and read its `errors`: each has the file, the line and the text TeX stopped at. Start from the **first** one; later errors are usually fallout. `status: "success"` only means a PDF came out — LaTeX recovers from many errors, so a clean build is `errorCount: 0`. Any other status comes with a `message` saying why there is no PDF. Reach for `overleaf_read_compile_log` (the whole log, often tens of kilobytes) only when the summary is not enough — an error is `! …` followed by an `l.<line>` marker.
 4. Fix, recompile, repeat. **Leave the project in a building state**, or tell the user exactly what is still broken. A person may need to export a PDF minutes from now.
 
 Common first errors: `Undefined control sequence` (missing `\usepackage`, or a macro the project doesn't define), `Missing $ inserted` (unescaped `_`, `^`, `%`, `&`, `#` in text), `File … not found` (wrong relative path — paths are relative to the root file, not to the included file), unbalanced `\begin`/`\end` or braces, `Citation … undefined` (key missing from the `.bib`; may need a second compile).
 
 `overleaf_compile` takes `draft: true` (faster, skips images) and `stopOnFirstError: true`. `overleaf_download_pdf` returns the PDF when you need to check layout.
+
+**Compiling a particular file.** A compile builds the project's main document. To build something else — slides or a cover letter kept in the same project, a chapter that stands on its own — pass its path as `rootDoc` to `overleaf_compile` (and to `overleaf_read_compile_log` / `overleaf_download_pdf`). That affects only that call; the project's main document, which is what the people in the editor compile, stays as it is. The file must have its own `\documentclass`: a section that is `\input` into the paper cannot be compiled by itself — compile the main document and look at the errors reported for that file. Every result names the `rootDoc` that was compiled; check it is the one you meant.
 
 ## Adding content
 

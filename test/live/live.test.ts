@@ -329,9 +329,19 @@ describe.skipIf(!liveEnabled || process.env.LIVE_PHASE === 'bootstrap').each(kin
       const w = await agent.call('overleaf_write_doc', { projectId, path: 'main.tex', content: minimal, overwrite: true })
       expect(w.ok, w.text).toBe(true)
     }
+    // What the project is set up to compile comes with the tree.
+    const tree = await agent.call('overleaf_get_project_tree', { projectId })
+    expect(tree.json.compiler, tree.text).toMatch(/^(pdf|xe|lua)?latex$/)
+    if (isBootstrap) expect(tree.json.rootDoc).toBe('main.tex')
+
     const compiled = await agent.call('overleaf_compile', { projectId })
     expect(compiled.ok, compiled.text).toBe(true)
     if (isBootstrap) expect(compiled.json.status).toBe('success')
+    // The project's own main document was compiled, and TeX agrees.
+    if (tree.json.rootDoc) expect(compiled.json.rootDoc).toBe(tree.json.rootDoc)
+    expect(compiled.json.outputFiles).toContain('output.log')
+    expect(compiled.json.errorCount).toBeGreaterThanOrEqual(0)
+    await pace()
     const log = await agent.call('overleaf_read_compile_log', { projectId })
     expect(log.ok, log.text).toBe(true)
     expect(log.json.log).toMatch(/This is \w*TeX/)
@@ -341,6 +351,31 @@ describe.skipIf(!liveEnabled || process.env.LIVE_PHASE === 'bootstrap').each(kin
       const blob = (pdf.content[0] as { resource: { blob: string } }).resource.blob
       expect(Buffer.from(blob, 'base64').subarray(0, 5).toString()).toBe('%PDF-')
     }
+  }, 300_000)
+
+  it('compiles a document other than the main one, and reports its errors', async () => {
+    // Not called main.tex and not in the root folder: only an explicit root gets it compiled.
+    const marker = `only-in-the-other-root-${Date.now()}`
+    const path = await newDoc('other-root.tex', `\\documentclass{article}\n\\begin{document}\n${marker} \\thisMacroDoesNotExist\n\\end{document}\n`)
+    await pace()
+    const compiled = await agent.call('overleaf_compile', { projectId, rootDoc: path })
+    expect(compiled.ok, compiled.text).toBe(true)
+    expect(compiled.json.rootDoc).toBe(path)
+    // TeX recovers from an undefined macro: a PDF, and the error with its place.
+    expect(compiled.json.status, compiled.text).toBe('success')
+    expect(compiled.json.errors[0], compiled.text).toMatchObject({ file: path, line: 3, message: 'Undefined control sequence.' })
+    await pace()
+    const log = await agent.call('overleaf_read_compile_log', { projectId, rootDoc: path })
+    expect(log.ok, log.text).toBe(true)
+    expect(log.json.rootDoc).toBe(path)
+    expect(log.json.log).toContain(marker)
+
+    // The project's own setting is untouched.
+    const tree = await agent.call('overleaf_get_project_tree', { projectId })
+    expect(tree.json.rootDoc).not.toBe(path)
+    const missing = await agent.call('overleaf_compile', { projectId, rootDoc: `${dir}/no-such-file.tex` })
+    expect(missing.ok).toBe(false)
+    expect(missing.json.code).toBe('NOT_FOUND')
   }, 300_000)
 
   it('comments: a full thread lifecycle where the server has a review panel, a clean refusal where it does not', async () => {

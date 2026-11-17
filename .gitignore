@@ -156,7 +156,7 @@ vite.config.ts.timestamp-*
 
 # Agent-harness per-user state (permission allow-lists, cron lock). Shared
 # project settings (.claude/settings.json) stay tracked. There is no root
-# .mcp.json on purpose: the repo root is the plugin root (see README, Developing).
+# .mcp.json on purpose: the repo root is the plugin root (see docs/development.md).
 .mcp.json
 .claude/settings.local.json
 .claude/scheduled_tasks.lock

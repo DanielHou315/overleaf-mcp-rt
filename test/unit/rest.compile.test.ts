@@ -29,6 +29,9 @@ describe('OverleafRest.compile', () => {
         const body = (await request.json()) as Record<string, unknown>
         expect(body.draft).toBe(false)
         expect(body.stopOnFirstError).toBe(false)
+        // No root given: the server's choice. A guessed path would be compiled as given.
+        expect(body).not.toHaveProperty('rootResourcePath')
+        expect(body).not.toHaveProperty('rootDoc_id')
         return HttpResponse.json({
           status: 'success',
           outputFiles: [
@@ -53,6 +56,20 @@ describe('OverleafRest.compile', () => {
       }),
     )
     await makeRest().compile('p1', { draft: true, stopOnFirstError: true })
+  })
+})
+
+describe('OverleafRest.compile with a root document', () => {
+  it('names it by id (older servers) and by path (newer ones)', async () => {
+    server.use(
+      http.post('https://o.example/project/p1/compile', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        expect(body.rootDoc_id).toBe('d9')
+        expect(body.rootResourcePath).toBe('talks/slides.tex')
+        return HttpResponse.json({ status: 'success', outputFiles: [] })
+      }),
+    )
+    await makeRest().compile('p1', { root: { rootDocId: 'd9', rootResourcePath: 'talks/slides.tex' } })
   })
 })
 
