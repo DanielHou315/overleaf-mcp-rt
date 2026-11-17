@@ -1,12 +1,16 @@
 import { parse as parseHtml } from 'node-html-parser'
 import { OverleafHttp } from './http.js'
-import { CommentsUnsupportedError, NetworkError, OverleafError } from '../errors.js'
+import { CommentsUnsupportedError, NetworkError, NotFoundError, OverleafError } from '../errors.js'
 
 export interface ProjectSummary {
   id: string
   name: string
   lastUpdated: string
   ownerEmail: string
+  /** Archived by this user. Overleaf reports a project that is both archived and trashed as archived only. */
+  archived: boolean
+  /** In this user's trash. */
+  trashed: boolean
 }
 
 export interface CompileOutputFile {
@@ -80,7 +84,63 @@ export class OverleafRest {
       name: String(p.name),
       lastUpdated: String(p.lastUpdated),
       ownerEmail: String((p.owner as { email?: string } | undefined)?.email ?? ''),
+      archived: p.archived === true,
+      trashed: p.trashed === true,
     }))
+  }
+
+  async createProject(
+    name: string,
+    template: 'blank' | 'example' = 'blank',
+  ): Promise<{ id: string }> {
+    const res = await this.http.postJson('/project/new', { projectName: name, template })
+    if (!res.ok) throw await projectRequestFailed(res, 'createProject')
+    const json = (await res.json()) as { project_id?: string }
+    if (!json.project_id) {
+      throw new OverleafError('OVERLEAF_GENERIC', 'createProject response missing project_id')
+    }
+    return { id: json.project_id }
+  }
+
+  async cloneProject(projectId: string, name: string): Promise<{ id: string }> {
+    const res = await this.http.postJson(
+      `/project/${encodeURIComponent(projectId)}/clone`,
+      { projectName: name },
+    )
+    if (!res.ok) throw await projectRequestFailed(res, 'cloneProject', projectId)
+    const json = (await res.json()) as { project_id?: string }
+    if (!json.project_id) {
+      throw new OverleafError('OVERLEAF_GENERIC', 'cloneProject response missing project_id')
+    }
+    return { id: json.project_id }
+  }
+
+  async renameProject(projectId: string, newName: string): Promise<void> {
+    const res = await this.http.postJson(
+      `/project/${encodeURIComponent(projectId)}/rename`,
+      { newProjectName: newName },
+    )
+    if (!res.ok) throw await projectRequestFailed(res, 'renameProject', projectId)
+  }
+
+  async archiveProject(projectId: string): Promise<void> {
+    const res = await this.http.postJson(`/project/${encodeURIComponent(projectId)}/archive`, {})
+    if (!res.ok) throw await projectRequestFailed(res, 'archiveProject', projectId)
+  }
+
+  async unarchiveProject(projectId: string): Promise<void> {
+    const res = await this.http.delete(`/project/${encodeURIComponent(projectId)}/archive`)
+    if (!res.ok) throw await projectRequestFailed(res, 'unarchiveProject', projectId)
+  }
+
+  async trashProject(projectId: string): Promise<void> {
+    const res = await this.http.postJson(`/project/${encodeURIComponent(projectId)}/trash`, {})
+    if (!res.ok) throw await projectRequestFailed(res, 'trashProject', projectId)
+  }
+
+  async untrashProject(projectId: string): Promise<void> {
+    const res = await this.http.delete(`/project/${encodeURIComponent(projectId)}/trash`)
+    if (!res.ok) throw await projectRequestFailed(res, 'untrashProject', projectId)
   }
 
   /**
@@ -376,4 +436,28 @@ export interface CommentThread {
 
 function commentsUnsupported(): CommentsUnsupportedError {
   return new CommentsUnsupportedError('This Overleaf instance does not provide comment threads.')
+}
+
+/**
+ * A failed project-management request. Overleaf answers a name it refuses
+ * ("Project name cannot contain / characters", too long, …) with a 400 whose
+ * plain-text body is the reason, so pass that through.
+ */
+async function projectRequestFailed(res: Response, op: string, projectId?: string): Promise<OverleafError> {
+  if (res.status === 404 && projectId !== undefined) {
+    return new NotFoundError(`No project ${projectId}`, { projectId })
+  }
+  let reason = ''
+  try {
+    reason = (await res.text()).trim()
+  } catch {
+    // no body to report
+  }
+  // An HTML error page is not a reason worth showing.
+  if (reason.startsWith('<') || reason.length > 300) reason = ''
+  return new OverleafError(
+    'OVERLEAF_GENERIC',
+    `${op} returned ${res.status}${reason ? `: ${reason}` : ''}`,
+    { status: res.status, ...(projectId ? { projectId } : {}), ...(reason ? { reason } : {}) },
+  )
 }

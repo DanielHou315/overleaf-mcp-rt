@@ -113,7 +113,7 @@ They are plain `SKILL.md` folders in [`skills/`](skills/), written for any agent
 
 ## Tools
 
-There are 22 tools. Each takes an optional `host`. The [tool reference](docs/tools.md) covers edit matching, compiling, what comes back, and the error codes.
+There are 29 tools. Each takes an optional `host`. The [tool reference](docs/tools.md) covers edit matching, compiling, what comes back, and the error codes.
 
 **Discover and read**
 
@@ -126,6 +126,16 @@ There are 22 tools. Each takes an optional `host`. The [tool reference](docs/too
 | `overleaf_read_doc_range` | Part of a document, by lines or by offset. |
 | `overleaf_read_file` | A binary file, such as an image or a PDF. |
 | `overleaf_check_changes` | What collaborators changed since the agent last looked. |
+
+**Projects**
+
+| Tool | Purpose |
+|---|---|
+| `overleaf_create_project` | Create a blank project, or Overleaf's example project. |
+| `overleaf_clone_project` | Copy a project under a new name. |
+| `overleaf_rename_project` | Rename a project. |
+| `overleaf_archive_project` / `overleaf_unarchive_project` | Archive a project, or bring it back. |
+| `overleaf_trash_project` / `overleaf_untrash_project` | Move a project to the trash, or restore it. There is no permanent delete. |
 
 **Edit**
 

@@ -49,3 +49,7 @@ It replaces the whole file from your possibly stale copy. It is refused if you h
 ## Files and folders
 
 `overleaf_create_doc` (with `content`), `overleaf_create_folder`, `overleaf_upload_file` (base64, for images and PDFs), `overleaf_rename`, `overleaf_move`, `overleaf_delete_entity`. `parentPath: ""` is the project root. Deleting is immediate and shared — confirm with the user before deleting anything you did not create in this session. After a rename or move, update the `\input`, `\include`, `\includegraphics` and `\bibliography` lines that point at the old path.
+
+## Projects
+
+`overleaf_create_project` (blank, or `template: "example"`), `overleaf_clone_project` and `overleaf_rename_project` return the project id to use next. `overleaf_list_projects` marks each project `archived` / `trashed`. Archiving or trashing removes a project from everyone's main list, so **confirm with the user first**, even for a project you created. Prefer `overleaf_trash_project` to archiving when the user wants a project gone: it is reversible with `overleaf_untrash_project`, and there is no tool for permanent deletion.
