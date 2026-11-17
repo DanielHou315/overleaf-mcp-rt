@@ -13,7 +13,6 @@ import {
   handleUnarchiveProject,
   handleTrashProject,
   handleUntrashProject,
-  handleDeleteProject,
   handleGetProjectTree,
 } from './projects.js'
 import { handleReadDoc, handleReadFile, handleWriteDoc } from './docs.js'
@@ -43,12 +42,12 @@ import { formatExternalChanges } from '../changes.js'
 const TOOL_DEFINITIONS = [
   {
     name: 'overleaf_list_projects',
-    description: 'List Overleaf projects accessible to the configured account.',
+    description: 'List Overleaf projects accessible to the configured account, with archived and trashed flags for each.',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
     name: 'overleaf_create_project',
-    description: 'Create a new Overleaf project. template="none" creates a blank project; template="example" creates Overleaf\'s example project.',
+    description: 'Create a new Overleaf project. template="blank" (the default) creates an empty project; template="example" creates Overleaf\'s example project.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -116,19 +115,6 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       properties: { projectId: { type: 'string' } },
       required: ['projectId'],
-    },
-  },
-  {
-    name: 'overleaf_delete_project',
-    description: 'Permanently delete an Overleaf project. This cannot be undone; prefer overleaf_trash_project unless permanent deletion was explicitly requested.',
-    inputSchema: {
-      type: 'object',
-      properties: { projectId: { type: 'string' } },
-      required: ['projectId'],
-    },
-    annotations: {
-      destructiveHint: true,
-      idempotentHint: true,
     },
   },
   {
@@ -507,8 +493,6 @@ export function registerAllTools(server: Server, source: ContextSource) {
         return wrap(await handleTrashProject(ctx, args as { projectId: string }))
       case 'overleaf_untrash_project':
         return wrap(await handleUntrashProject(ctx, args as { projectId: string }))
-      case 'overleaf_delete_project':
-        return wrap(await handleDeleteProject(ctx, args as { projectId: string }))
       case 'overleaf_get_project_tree':
         return wrap(await handleGetProjectTree(ctx, args as { projectId: string }))
       case 'overleaf_read_doc':

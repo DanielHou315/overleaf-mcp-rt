@@ -15,7 +15,6 @@ import {
   handleUnarchiveProject,
   handleTrashProject,
   handleUntrashProject,
-  handleDeleteProject,
   handleGetProjectTree,
 } from '../../src/mcp/tools/projects.js'
 import { handleReadDoc, handleReadFile, handleWriteDoc } from '../../src/mcp/tools/docs.js'
@@ -98,7 +97,8 @@ describe('list_projects tool', () => {
     )
     const out = await handleListProjects(ctx, {})
     expect(out.projects).toHaveLength(2)
-    expect(out.projects[0]).toMatchObject({ id: 'p1', name: 'Thesis' })
+    expect(out.projects[0]).toMatchObject({ id: 'p1', name: 'Thesis', archived: false, trashed: false })
+    expect(out.projects[1]).toMatchObject({ id: 'p2', archived: true, trashed: false })
   })
 })
 
@@ -133,7 +133,7 @@ describe('project lifecycle tools', () => {
     })
   })
 
-  it('returns success envelopes for archive/trash/delete operations', async () => {
+  it('returns success envelopes for archive/trash operations', async () => {
     server.use(
       http.post('https://o.example/project/p1/archive', () =>
         new HttpResponse(null, { status: 204 }),
@@ -147,16 +147,12 @@ describe('project lifecycle tools', () => {
       http.delete('https://o.example/project/p1/trash', () =>
         new HttpResponse(null, { status: 204 }),
       ),
-      http.delete('https://o.example/project/p1', () =>
-        new HttpResponse(null, { status: 204 }),
-      ),
     )
 
     await expect(handleArchiveProject(ctx, { projectId: 'p1' })).resolves.toEqual({ ok: true, projectId: 'p1' })
     await expect(handleUnarchiveProject(ctx, { projectId: 'p1' })).resolves.toEqual({ ok: true, projectId: 'p1' })
     await expect(handleTrashProject(ctx, { projectId: 'p1' })).resolves.toEqual({ ok: true, projectId: 'p1' })
     await expect(handleUntrashProject(ctx, { projectId: 'p1' })).resolves.toEqual({ ok: true, projectId: 'p1' })
-    await expect(handleDeleteProject(ctx, { projectId: 'p1' })).resolves.toEqual({ ok: true, projectId: 'p1' })
   })
 })
 

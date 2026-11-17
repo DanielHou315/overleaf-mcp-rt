@@ -33,8 +33,8 @@ describe('OverleafRest.listProjects', () => {
     )
     const projects = await makeRest().listProjects()
     expect(projects).toEqual([
-      { id: 'p1', name: 'Thesis', lastUpdated: '2026-04-20T12:00:00Z', ownerEmail: 'me@example.com' },
-      { id: 'p2', name: 'Paper', lastUpdated: '2026-04-22T13:00:00Z', ownerEmail: 'me@example.com' },
+      { id: 'p1', name: 'Thesis', lastUpdated: '2026-04-20T12:00:00Z', ownerEmail: 'me@example.com', archived: false, trashed: false },
+      { id: 'p2', name: 'Paper', lastUpdated: '2026-04-22T13:00:00Z', ownerEmail: 'me@example.com', archived: true, trashed: false },
     ])
   })
 
@@ -98,7 +98,7 @@ describe('OverleafRest project lifecycle', () => {
     expect(renameBody).toEqual({ newProjectName: 'Renamed' })
   })
 
-  it('archives, restores, trashes, restores, and permanently deletes projects', async () => {
+  it('archives, restores, trashes and restores projects', async () => {
     const calls: string[] = []
     server.use(
       http.post('https://o.example/project/p1/archive', () => {
@@ -117,10 +117,6 @@ describe('OverleafRest project lifecycle', () => {
         calls.push('untrash')
         return new HttpResponse(null, { status: 204 })
       }),
-      http.delete('https://o.example/project/p1', () => {
-        calls.push('delete')
-        return new HttpResponse(null, { status: 204 })
-      }),
     )
 
     const rest = makeRest()
@@ -128,9 +124,8 @@ describe('OverleafRest project lifecycle', () => {
     await rest.unarchiveProject('p1')
     await rest.trashProject('p1')
     await rest.untrashProject('p1')
-    await rest.deleteProject('p1')
 
-    expect(calls).toEqual(['archive', 'unarchive', 'trash', 'untrash', 'delete'])
+    expect(calls).toEqual(['archive', 'unarchive', 'trash', 'untrash'])
   })
 
   it('rejects malformed create responses', async () => {
@@ -138,5 +133,44 @@ describe('OverleafRest project lifecycle', () => {
       http.post('https://o.example/project/new', () => HttpResponse.json({})),
     )
     await expect(makeRest().createProject('Broken')).rejects.toThrow(/project_id/)
+  })
+
+  it("passes Overleaf's reason for refusing a name through", async () => {
+    server.use(
+      http.post('https://o.example/project/p1/rename', () =>
+        HttpResponse.text('Project name cannot contain / characters', { status: 400 }),
+      ),
+      http.post('https://o.example/project/new', () =>
+        HttpResponse.text('Project name cannot contain / characters', { status: 400 }),
+      ),
+    )
+    await expect(makeRest().renameProject('p1', 'a/b')).rejects.toMatchObject({
+      code: 'OVERLEAF_GENERIC',
+      message: 'renameProject returned 400: Project name cannot contain / characters',
+      context: { status: 400, projectId: 'p1', reason: 'Project name cannot contain / characters' },
+    })
+    await expect(makeRest().createProject('a/b')).rejects.toThrow(
+      'createProject returned 400: Project name cannot contain / characters',
+    )
+  })
+
+  it('does not paste an HTML error page into the message', async () => {
+    server.use(
+      http.post('https://o.example/project/p1/clone', () =>
+        HttpResponse.html('<html><body>Server Error</body></html>', { status: 500 }),
+      ),
+    )
+    const err = await makeRest().cloneProject('p1', 'Copy').catch((e: unknown) => e)
+    expect(err).toMatchObject({ code: 'OVERLEAF_GENERIC', message: 'cloneProject returned 500' })
+  })
+
+  it('maps a 404 to NOT_FOUND', async () => {
+    server.use(
+      http.post('https://o.example/project/nope/trash', () => new HttpResponse('Not found', { status: 404 })),
+    )
+    await expect(makeRest().trashProject('nope')).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      context: { projectId: 'nope' },
+    })
   })
 })

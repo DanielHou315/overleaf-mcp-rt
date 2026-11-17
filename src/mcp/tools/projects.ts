@@ -66,14 +66,6 @@ export async function handleUntrashProject(
   return { ok: true, projectId: input.projectId }
 }
 
-export async function handleDeleteProject(
-  ctx: ServerContext,
-  input: { projectId: string },
-): Promise<{ ok: true; projectId: string }> {
-  await ctx.rest.deleteProject(input.projectId)
-  return { ok: true, projectId: input.projectId }
-}
-
 export async function handleGetProjectTree(
   ctx: ServerContext,
   input: { projectId: string },
