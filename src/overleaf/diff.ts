@@ -1,4 +1,5 @@
 import diff from 'fast-diff'
+import { diffWordsWithSpace } from 'diff'
 
 export interface OtOp {
   /** Character offset in the flattened doc where the op applies. */
@@ -71,6 +72,25 @@ export function computeOps(oldText: string, newText: string): OtOp[] {
     } else if (kind === INSERT) {
       ops.push({ p, i: text })
       p += text.length
+    }
+  }
+  return ops
+}
+
+/**
+ * Like computeOps, but by word, for tracked changes, where every op becomes a
+ * suggestion: a character diff turns "propose" -> "introduce" into
+ * "-p +int -pos +duc", this into "-propose +introduce".
+ */
+export function computeWordOps(oldText: string, newText: string): OtOp[] {
+  const ops: OtOp[] = []
+  let p = 0
+  for (const part of diffWordsWithSpace(oldText, newText)) {
+    if (part.removed) {
+      ops.push({ p, d: part.value })
+    } else {
+      if (part.added) ops.push({ p, i: part.value })
+      p += part.value.length
     }
   }
   return ops

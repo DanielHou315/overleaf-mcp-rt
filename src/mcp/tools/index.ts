@@ -23,6 +23,11 @@ import type { DownloadPdfResult } from './compile.js'
 import { effectiveMime } from './mime.js'
 import { formatExternalChanges } from '../changes.js'
 
+const TRACK_CHANGES_PROPERTY = {
+  type: 'boolean',
+  description: 'Use it when the user wants to approve your edits first (they ask for suggestions or tracked changes): each changed word then becomes a suggestion for a person to accept or reject in the review panel. Omit it for the session default (off unless the user turned it on); false makes a direct edit. Needs a review panel (overleaf.com, Server Pro): elsewhere, and on documents in Overleaf\'s newer format, it fails with TRACK_CHANGES_UNSUPPORTED and nothing is changed.',
+} as const
+
 // All MCP tool names are prefixed `overleaf_*` so they remain unambiguous in
 // hosts that don't auto-namespace by server name (Cursor, Continue, custom
 // stdio integrations, etc.). Hosts that do namespace (`mcp__<server>__<tool>`)
@@ -87,7 +92,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'overleaf_write_doc',
-    description: 'Replace the entire contents of an Overleaf text doc. Prefer overleaf_edit_doc for anything short of a rewrite: a whole-doc replace is built from what you last read, so it is refused (DOC_CHANGED_EXTERNALLY) if a collaborator edited the doc since, and (DOC_NOT_READ) if the doc has content you have not read this session. Pass overwrite=true to skip both checks. Only the differing characters are sent, as live OT ops. Returns {versionBefore, versionAfter, charsBefore, charsAfter, charsDelta, opsApplied}.',
+    description: 'Replace the entire contents of an Overleaf text doc. Prefer overleaf_edit_doc for anything short of a rewrite: a whole-doc replace is built from what you last read, so it is refused (DOC_CHANGED_EXTERNALLY) if a collaborator edited the doc since, and (DOC_NOT_READ) if the doc has content you have not read this session. Pass overwrite=true to skip both checks. Only the differing characters are sent, as live OT ops (with trackChanges=true, the changed words, as suggestions). Returns {versionBefore, versionAfter, charsBefore, charsAfter, charsDelta, opsApplied}, and tracked=true when the change was tracked.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -95,13 +100,14 @@ const TOOL_DEFINITIONS = [
         path: { type: 'string' },
         content: { type: 'string' },
         overwrite: { type: 'boolean', description: 'Replace the doc even if it is unread or a collaborator changed it since your last read.' },
+        trackChanges: TRACK_CHANGES_PROPERTY,
       },
       required: ['projectId', 'path', 'content'],
     },
   },
   {
     name: 'overleaf_edit_doc',
-    description: 'Edit an Overleaf doc by exact string replacement — the recommended way to change text. Each edit replaces old_string with new_string. old_string must identify exactly one place in the doc (include enough surrounding text to make it unique) unless replace_all is true. Edits apply in order, each to the result of the previous, and atomically: if any edit fails, nothing is changed. Matching is against the live doc, so edits compose with what collaborators are typing elsewhere in the file; if someone changed the text you targeted, the call fails with EDIT_NO_MATCH and shows their change. If old_string is not found verbatim, a match that differs only in whitespace/indentation is accepted when unambiguous. To insert, use an anchor as old_string and repeat it in new_string; to delete, pass an empty new_string. Returns a unified diff of the change. dryRun=true previews without applying. (Legacy v1.1 edits with a "mode" field — replace, insert_before, insert_after, replace_lines, unified_diff, raw_ops — are still accepted.)',
+    description: 'Edit an Overleaf doc by exact string replacement — the recommended way to change text. Each edit replaces old_string with new_string. old_string must identify exactly one place in the doc (include enough surrounding text to make it unique) unless replace_all is true. Edits apply in order, each to the result of the previous, and atomically: if any edit fails, nothing is changed. Matching is against the live doc, so edits compose with what collaborators are typing elsewhere in the file; if someone changed the text you targeted, the call fails with EDIT_NO_MATCH and shows their change. If old_string is not found verbatim, a match that differs only in whitespace/indentation is accepted when unambiguous. To insert, use an anchor as old_string and repeat it in new_string; to delete, pass an empty new_string. Returns a unified diff of the change. dryRun=true previews without applying. trackChanges=true sends the edit as suggestions; the result then says tracked=true. (Legacy v1.1 edits with a "mode" field — replace, insert_before, insert_after, replace_lines, unified_diff, raw_ops — are still accepted.)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -120,6 +126,7 @@ const TOOL_DEFINITIONS = [
           },
         },
         dryRun: { type: 'boolean' },
+        trackChanges: TRACK_CHANGES_PROPERTY,
       },
       required: ['projectId', 'path', 'edits'],
     },
@@ -402,7 +409,7 @@ export function registerAllTools(server: Server, source: ContextSource) {
         return wrap(
           await handleWriteDoc(
             ctx,
-            args as { projectId: string; path: string; content: string; overwrite?: boolean },
+            args as unknown as Parameters<typeof handleWriteDoc>[1],
           ),
         )
       case 'overleaf_edit_doc':

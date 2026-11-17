@@ -18,6 +18,7 @@ The unit tests run the engine against a protocol-faithful fake. This directory c
 | Binary upload and read-back | upload route / file-store differences |
 | Compile, log, PDF; the project's main document is the one compiled; a second document in a folder compiled via `rootDoc`, its error reported with project path and line | compile API and output-file URL changes; how the server chooses the root file; where TeX runs relative to it |
 | Comments: full lifecycle where a review panel exists, `COMMENTS_UNSUPPORTED` and an untouched doc where it doesn't | Server Pro / overleaf.com vs stock CE detection |
+| Tracked changes: `TRACK_CHANGES_UNSUPPORTED` and an untouched doc where there is no review panel or the doc is history-OT; then a tracked insert and delete, while a second client watches, that a fresh connection finds in the doc's ranges with distinct ids. On a throw-away CE that part runs with the test-only `OVERLEAF_TRACK_CHANGES_SKIP_CHECK=1` | review-panel detection; the `meta.tc` id seed real-time validates; what document-updater records |
 
 For the matrix, `run-matrix.sh` also greps the instance's own `real-time` and `document-updater` logs for OT errors and fails the version if there are any — the server's view, not just ours.
 

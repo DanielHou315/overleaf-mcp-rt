@@ -14,6 +14,8 @@ export interface ServerContext {
   http: OverleafHttp
   rest: OverleafRest
   ot: OtEngineRegistry
+  /** Session default for `trackChanges` on overleaf_edit_doc / overleaf_write_doc (OVERLEAF_TRACK_CHANGES=1). */
+  trackChanges?: boolean
 }
 
 export interface ContextOptions {
@@ -26,6 +28,10 @@ export interface ContextOptions {
   stickyCookies?: string
   /** Allow writes to history-ot docs. Default: the OVERLEAF_HISTORY_OT_WRITES=1 opt-in. */
   historyOtWrites?: boolean
+  /** Send edits as tracked changes unless a call says otherwise. Default: OVERLEAF_TRACK_CHANGES=1. */
+  trackChanges?: boolean
+  /** Testing only: send tracked changes without a review panel. Default: OVERLEAF_TRACK_CHANGES_SKIP_CHECK=1. */
+  trackChangesSkipCheck?: boolean
 }
 
 export function buildContext(opts: ContextOptions): ServerContext {
@@ -50,10 +56,11 @@ export function buildContext(opts: ContextOptions): ServerContext {
       socket: makeSocket(),
       socketFactory: makeSocket,
       historyOtWrites: opts.historyOtWrites ?? process.env.OVERLEAF_HISTORY_OT_WRITES === '1',
+      trackChangesSkipCheck: opts.trackChangesSkipCheck ?? process.env.OVERLEAF_TRACK_CHANGES_SKIP_CHECK === '1',
     }
   }
   const ot = new OtEngineRegistry(otFactory)
-  return { http, rest, ot }
+  return { http, rest, ot, trackChanges: opts.trackChanges ?? process.env.OVERLEAF_TRACK_CHANGES === '1' }
 }
 
 export interface HostSummary {

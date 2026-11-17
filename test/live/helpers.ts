@@ -7,7 +7,8 @@ import { passportLogin, validateCookie, fetchStickyCookies } from '../../src/ove
 import { OverleafHttp } from '../../src/overleaf/http.js'
 import { OverleafRest } from '../../src/overleaf/rest.js'
 import { OverleafSocket } from '../../src/overleaf/socket.js'
-import { OtEngine } from '../../src/overleaf/ot.js'
+import { OtEngine, decodeLatin1, decodeLatin1Lines } from '../../src/overleaf/ot.js'
+import type { JoinDocResponse, TrackedChange } from '../../src/overleaf/ot.types.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -152,8 +153,11 @@ export interface Agent {
   close(): Promise<void>
 }
 
-/** The shipped artifact, black box: `node dist/cli.js` over stdio, exactly as an MCP client runs it. */
-export async function startAgent(target: Target, opts: { historyOtWrites?: boolean } = {}): Promise<Agent> {
+/**
+ * The shipped artifact, black box: `node dist/cli.js` over stdio, exactly as an MCP client runs it.
+ * `env` adds variables to the server's environment.
+ */
+export async function startAgent(target: Target, opts: { historyOtWrites?: boolean; env?: Record<string, string> } = {}): Promise<Agent> {
   const client = new Client({ name: 'live-suite', version: '0' }, { capabilities: {} })
   await client.connect(new StdioClientTransport({
     command: process.execPath,
@@ -167,6 +171,7 @@ export async function startAgent(target: Target, opts: { historyOtWrites?: boole
       OVERLEAF_CREDENTIALS_FILE: join(root, 'test', 'live', '.no-credentials-file'),
       // history-ot docs are read-only unless the user opts in; the suite is that user.
       OVERLEAF_HISTORY_OT_WRITES: opts.historyOtWrites === false ? '0' : '1',
+      ...opts.env,
     },
     stderr: 'inherit',
   }))
@@ -187,6 +192,8 @@ export async function startAgent(target: Target, opts: { historyOtWrites?: boole
 
 export interface Human {
   engine: OtEngine
+  /** The engine's connection, for requests the engine doesn't make itself. */
+  socket: OverleafSocket
   /** Things that must never happen to a person with the doc open. */
   otErrors: unknown[]
   disconnects: number
@@ -201,7 +208,7 @@ export interface Human {
 export async function joinAsHuman(target: Target): Promise<Human> {
   const cookie = target.stickyCookies ? `${target.sessionCookie}; ${target.stickyCookies}` : target.sessionCookie
   const socket = new OverleafSocket({ url: target.url, projectId: target.projectId, sessionCookie: cookie, extraHeaders: target.extraHeaders })
-  const human: Human = { engine: new OtEngine({ socket, projectId: target.projectId, historyOtWrites: true }), otErrors: [], disconnects: 0, close: () => human.engine.disconnect() }
+  const human: Human = { engine: new OtEngine({ socket, projectId: target.projectId, historyOtWrites: true }), socket, otErrors: [], disconnects: 0, close: () => human.engine.disconnect() }
   socket.on('otUpdateError', (...args) => human.otErrors.push(args))
   socket.on('disconnect', () => { human.disconnects += 1 })
   await human.engine.connect()
@@ -214,6 +221,30 @@ export async function freshRead(target: Target, path: string): Promise<string> {
   try {
     const { id } = await reader.engine.waitForPath(path, 5000)
     return (await reader.engine.joinDoc(id)).text
+  } finally {
+    reader.close()
+  }
+}
+
+/**
+ * Like freshRead, plus the doc's tracked changes with their text decoded, read
+ * from joinDoc's ranges directly because the engine only counts them. ShareJS
+ * docs only: history-ot keeps changes in its snapshot.
+ */
+export async function freshRanges(target: Target, path: string): Promise<{ text: string; changes: TrackedChange[] }> {
+  const reader = await joinAsHuman(target)
+  try {
+    const { id } = await reader.engine.waitForPath(path, 5000)
+    // The engine has joined nothing on this socket, so this join overlaps no other.
+    const [lines, , , ranges] = (await reader.socket.emitWithAck('joinDoc', id, { encodeRanges: true, supportsHistoryOT: true })) as JoinDocResponse
+    // encodeRanges packs the changes' text the way it packs doc lines: UTF-8 bytes as latin1.
+    return {
+      text: decodeLatin1Lines(lines),
+      changes: (ranges?.changes ?? []).map((c) => ({
+        ...c,
+        op: { ...c.op, ...(c.op.i !== undefined ? { i: decodeLatin1(c.op.i) } : {}), ...(c.op.d !== undefined ? { d: decodeLatin1(c.op.d) } : {}) },
+      })),
+    }
   } finally {
     reader.close()
   }

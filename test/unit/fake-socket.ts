@@ -36,15 +36,13 @@ export class FakeSocket implements SocketLike {
 
   emitWithAck(event: string, ...args: unknown[]): Promise<unknown[]> {
     this.emits.push({ event, args, hadAck: true })
-    const responder = this.ackResponders.get(event) ?? this.defaultAck
-    if (!responder) {
+    const perEvent = this.ackResponders.get(event)
+    if (!perEvent && !this.defaultAck) {
       // Default: succeed with no data. Tests should usually register a responder.
       this.confirmWrite(event, args)
       return Promise.resolve([])
     }
-    const result = responder === this.defaultAck
-      ? this.defaultAck!(event, ...args)
-      : responder(...args)
+    const result = perEvent ? perEvent(...args) : this.defaultAck!(event, ...args)
     const [err, ...data] = result
     if (err) return Promise.reject(err)
     this.confirmWrite(event, args)

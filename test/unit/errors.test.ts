@@ -5,6 +5,8 @@ import {
   ProxyAuthFailedError,
   ProjectAccessDeniedError,
   NetworkError,
+  TrackChangesLimitError,
+  TrackChangesUnsupportedError,
 } from '../../src/errors.js'
 
 describe('errors', () => {
@@ -31,6 +33,15 @@ describe('errors', () => {
     const e = new ProjectAccessDeniedError('xyz')
     expect(e.code).toBe('PROJECT_ACCESS_DENIED')
     expect(e.context).toEqual({ projectId: 'xyz' })
+  })
+
+  it('the tracked-change errors carry stable codes and a next step', () => {
+    const unsupported = new TrackChangesUnsupportedError('no review panel', { path: 'main.tex' }).toEnvelope()
+    expect(unsupported).toMatchObject({ code: 'TRACK_CHANGES_UNSUPPORTED', retryable: false, context: { path: 'main.tex' } })
+    expect(unsupported.hint).toMatch(/Nothing was changed/)
+    const limit = new TrackChangesLimitError('too many').toEnvelope()
+    expect(limit).toMatchObject({ code: 'TRACK_CHANGES_LIMIT', retryable: false })
+    expect(limit.hint).toMatch(/2000/)
   })
 
   it('NetworkError wraps a cause', () => {

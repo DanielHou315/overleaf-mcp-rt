@@ -7,7 +7,7 @@ import {
   NotFoundError,
   OverleafError,
 } from '../../errors.js'
-import { computeOps, type OtOp } from '../../overleaf/diff.js'
+import type { OtOp } from '../../overleaf/diff.js'
 import { applyOps } from '../../overleaf/text-ot.js'
 import type { WriteSummary } from './docs.js'
 import { closestRegion, findMatches, lineOf, type MatchStrategy } from './match.js'
@@ -35,18 +35,35 @@ export interface EditDocInput {
   path: string
   edits: EditMode[]
   dryRun?: boolean
+  /** Send as tracked changes. Default: the session's (ServerContext.trackChanges). */
+  trackChanges?: boolean
 }
 
 export interface EditDocOutput {
   ok: true
   dryRun: boolean
+  /** Present when the change was sent as tracked changes (with dryRun: would be). */
+  tracked?: true
   summary: WriteSummary
   /** Unified diff of what this call changed, so the result can be checked without re-reading. */
   diff: string
-  /** Present when an old_string only matched after relaxing whitespace. */
+  /** Present when an old_string only matched after relaxing whitespace, or to explain a tracked edit. */
   notes?: string[]
   resolvedOps?: OtOp[]
 }
+
+/** A call's `trackChanges`, or the session default (ServerContext.trackChanges) when it has none. */
+export function trackChangesFor(value: unknown, ctx: ServerContext): boolean {
+  if (value === undefined) return ctx.trackChanges ?? false
+  // Refuse rather than coerce: "false" must not become a tracked edit, nor "true" a direct one.
+  if (typeof value !== 'boolean') throw new OverleafError('OVERLEAF_GENERIC', 'trackChanges must be true or false')
+  return value
+}
+
+/** Told to the agent after a tracked edit, so it neither re-applies nor fights over it. */
+export const TRACKED_NOTE =
+  'Sent as tracked changes for a person to accept or reject. The doc text already includes your ' +
+  'insertions and omits your deletions; a rejection shows up in <external-changes>.'
 
 const MAX_DIFF_CHARS = 6000
 
@@ -76,6 +93,7 @@ export async function handleEditDoc(
     )
   }
 
+  const trackChanges = trackChangesFor(input.trackChanges, ctx)
   const engine = await ctx.ot.get(input.projectId)
   const docId = engine.pathToDocId(input.path)
   if (docId === null) {
@@ -99,39 +117,30 @@ export async function handleEditDoc(
     return applyEdits(text, input.edits, notes)
   }
 
-  if (input.dryRun) {
-    const baseline = await engine.openDoc(docId)
-    const before = baseline.text
-    const after = edit(before)
-    return {
-      ok: true,
-      dryRun: true,
-      summary: summary(baseline.version, baseline.version, before.length, after.length, input.edits.length),
-      diff: renderDiff(input.path, before, after),
-      ...(notes.length ? { notes: [...notes] } : {}),
-      resolvedOps: computeOps(before, after),
-    }
-  }
-
   // `edit` runs inside the engine against the live text at the instant the op
-  // is emitted, so edits compose with whatever collaborators typed meanwhile.
+  // is emitted (for a dry run: would be), so edits compose with whatever
+  // collaborators typed meanwhile.
+  const dryRun = Boolean(input.dryRun)
   let intended = ''
-  const result = await engine.updateDoc(docId, (text) => (intended = edit(text)))
+  const result = await engine.updateDoc(docId, (text) => (intended = edit(text)), { trackChanges, dryRun })
   return {
     ok: true,
-    dryRun: false,
+    dryRun,
+    ...(result.tracked ? { tracked: true as const } : {}),
     summary: summary(
       result.versionBefore, result.versionAfter,
       result.textBefore.length, result.textAfter.length,
       input.edits.length,
     ),
     diff: renderDiff(input.path, result.textBefore, intended),
-    ...notesWith(notes, result.unstorableCodeUnits),
+    ...(dryRun
+      ? { ...notesWith(notes, result.unstorableCodeUnits, false), resolvedOps: result.ops }
+      : notesWith(notes, result.unstorableCodeUnits, result.tracked)),
   }
 }
 
 /** Overleaf's own limitation, but the agent asked for text it did not get: say so. */
-export function unstorableNote(codeUnits: number): string {
+function unstorableNote(codeUnits: number): string {
   return (
     `Overleaf cannot store characters outside the Basic Multilingual Plane (emoji and some rare symbols): ` +
     `${codeUnits / 2} such character(s) in your text were stored as U+FFFD replacement characters. ` +
@@ -139,8 +148,13 @@ export function unstorableNote(codeUnits: number): string {
   )
 }
 
-function notesWith(notes: string[], unstorableCodeUnits: number): { notes?: string[] } {
-  const all = unstorableCodeUnits > 0 ? [...notes, unstorableNote(unstorableCodeUnits)] : [...notes]
+/** The result's `notes`: the caller's, plus what the agent must know about how the write was stored. */
+export function notesWith(notes: string[], unstorableCodeUnits: number, tracked: boolean): { notes?: string[] } {
+  const all = [
+    ...notes,
+    ...(unstorableCodeUnits > 0 ? [unstorableNote(unstorableCodeUnits)] : []),
+    ...(tracked ? [TRACKED_NOTE] : []),
+  ]
   return all.length ? { notes: all } : {}
 }
 
