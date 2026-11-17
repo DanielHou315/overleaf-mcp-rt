@@ -1,0 +1,11 @@
+{
+  // The root config covers only src/ (typecheck and build). This one gives the
+  // test files the same settings, so editors load Node's types for them.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true
+  },
+  "include": ["**/*.ts"],
+  "exclude": []
+}
