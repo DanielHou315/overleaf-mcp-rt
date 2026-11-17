@@ -6,17 +6,20 @@ import type {
   DocEntity,
   FileRefEntity,
   FolderEntity,
+  JoinDocRanges,
   JoinProjectResponse,
   ProjectEntity,
 } from './ot.types.js'
 import {
   CommentsUnsupportedError, HistoryOtMismatchError, HistoryOtWritesDisabledError, NetworkError, OverleafError,
+  TrackChangesUnsupportedError,
 } from '../errors.js'
-import { computeOps, sanitizeOps, type OtOp } from './diff.js'
+import { computeOps, computeWordOps, sanitizeOps, type OtOp } from './diff.js'
 import {
   decodeEditOperations, isAscending, isRawStringFileData, toTextOperation, transformInFlight, type OtType,
 } from './history-ot.js'
 import { applyOps as applyTextOps, transformOps } from './text-ot.js'
+import { boundsAtJoin, generateIdSeed, grow, trackedLimitError, type TrackedBounds } from './track-changes.js'
 import type { UpdateSchema } from './ot.types.js'
 
 /** Mirrors v0.1's TreeNode shape so MCP tool outputs stay stable. */
@@ -41,6 +44,8 @@ export interface DocBaseline {
   version: number
   /** Comment anchors, kept in step with the text as ops arrive. */
   comments: CommentAnchor[]
+  /** Upper bounds on the doc's tracked changes, checked against Overleaf's limits (see track-changes.ts). */
+  trackedBounds: TrackedBounds
 }
 
 /** Where a comment thread is attached in a doc. */
@@ -52,7 +57,11 @@ export interface CommentAnchor {
   text: string
 }
 
-/** Outcome of `updateDoc`: the server-confirmed text either side of our op. */
+/**
+ * Outcome of `updateDoc`: the server-confirmed text either side of our op.
+ * With `dryRun` nothing was sent: `textAfter` is what the ops would make of
+ * `textBefore`, and `versionAfter` is `versionBefore`.
+ */
 export interface UpdateResult {
   /** Live text our edit was authored against. */
   textBefore: string
@@ -63,6 +72,21 @@ export interface UpdateResult {
   ops: OtOp[]
   /** UTF-16 code units Overleaf cannot store (non-BMP characters) that were sent as U+FFFD instead. */
   unstorableCodeUnits: number
+  /** The ops were sent as tracked changes (with `dryRun`: would be). False when there was nothing to send. */
+  tracked: boolean
+}
+
+/** How an edit is sent. */
+export interface EditOptions {
+  /**
+   * Send it as tracked changes, for a person to accept or reject in the review
+   * panel. Refused before anything is sent where nobody could review them
+   * (TRACK_CHANGES_UNSUPPORTED) or they could take the doc past one of
+   * Overleaf's limits (TRACK_CHANGES_LIMIT).
+   */
+  trackChanges?: boolean
+  /** Run the checks a send would and return what it would send, without sending it. */
+  dryRun?: boolean
 }
 
 /** A change made by someone else to a doc the agent has already looked at. */
@@ -88,6 +112,7 @@ export interface ExternalChanges {
 
 interface Inflight {
   ops: OtOp[]
+  tracked: boolean
   resolve: () => void
   reject: (err: unknown) => void
   timer: ReturnType<typeof setTimeout>
@@ -139,6 +164,13 @@ export interface OtEngineOptions {
    * the user's call (OVERLEAF_HISTORY_OT_WRITES=1).
    */
   historyOtWrites?: boolean
+  /**
+   * Testing only (OVERLEAF_TRACK_CHANGES_SKIP_CHECK=1): send tracked changes
+   * even where the project's `features` say nobody could review them, so the
+   * live suite can see what a stock Community Edition records. history-ot
+   * docs are still refused.
+   */
+  trackChangesSkipCheck?: boolean
 }
 
 /**
@@ -198,6 +230,7 @@ export class OtEngine {
   private readonly joinTimeoutMs: number
   private readonly connectTimeoutMs: number
   private readonly historyOtWrites: boolean
+  private readonly trackChangesSkipCheck: boolean
   /** history-ot docs whose first write has been checked against a fresh server snapshot. */
   private readonly historyOtVerified = new Set<string>()
   /** Set once a check failed: our idea of this server's history-ot is wrong, so stop writing it. */
@@ -215,6 +248,7 @@ export class OtEngine {
     this.joinTimeoutMs = opts.joinTimeoutMs ?? 15_000
     this.connectTimeoutMs = opts.connectTimeoutMs ?? 20_000
     this.historyOtWrites = opts.historyOtWrites ?? false
+    this.trackChangesSkipCheck = opts.trackChangesSkipCheck ?? false
   }
 
   get publicId(): string | null { return this._publicId }
@@ -468,6 +502,8 @@ export class OtEngine {
             comments: (lines.comments ?? []).flatMap((c) =>
               c.ranges.map((r) => ({ threadId: c.id, p: r.pos, text: content.slice(r.pos, r.pos + r.length) })),
             ),
+            // Not counted: tracked writes to history-ot docs are refused before any limit check.
+            trackedBounds: boundsAtJoin(),
           }
         } else {
           baseline = {
@@ -479,8 +515,9 @@ export class OtEngine {
               threadId: c.op.t ?? c.id,
               p: c.op.p,
               // encodeRanges packs comment text the same way as doc lines.
-              text: Buffer.from(c.op.c ?? '', 'latin1').toString('utf-8'),
+              text: decodeLatin1(c.op.c ?? ''),
             })),
+            trackedBounds: boundsAtJoin(ranges?.changes),
           }
         }
         this.baselines.set(docId, baseline)
@@ -553,15 +590,24 @@ export class OtEngine {
    * Edit a doc. `edit` receives the *live* text and returns the desired text;
    * it runs synchronously right before the op is emitted, so there is no
    * window in which a collaborator's keystroke can invalidate the offsets.
-   * If `edit` throws, nothing is sent. Resolves once the server confirms.
+   * If `edit` throws, nothing is sent. Resolves once the server confirms, or
+   * with `opts.dryRun` once every check has passed, without sending.
+   * `edit` can run twice (a tracked edit near one of Overleaf's limits is
+   * recounted against a fresh snapshot), so it must not keep state between
+   * calls.
    *
    * Writes to the same doc are serialized; different docs run in parallel.
    */
-  async updateDoc(docId: string, edit: (text: string) => string): Promise<UpdateResult> {
+  async updateDoc(docId: string, edit: (text: string) => string, opts: EditOptions = {}): Promise<UpdateResult> {
+    return this.enqueue(docId, () => this.submitEdit(docId, edit, opts))
+  }
+
+  /** Run `task` once every write already queued for the doc has settled. */
+  private async enqueue<T>(docId: string, task: () => Promise<T>): Promise<T> {
     const previous = this.writeQueues.get(docId) ?? Promise.resolve()
     const next = previous
       .catch(() => undefined) // a prior failure must not block the next caller
-      .then(() => this.submitEdit(docId, edit))
+      .then(task)
     this.writeQueues.set(docId, next)
     try {
       return await next
@@ -571,8 +617,53 @@ export class OtEngine {
     }
   }
 
-  private submitEdit(docId: string, edit: (text: string) => string): Promise<UpdateResult> {
-    return this.submitOps(docId, (text) => computeOps(text, edit(text)))
+  private submitEdit(docId: string, edit: (text: string) => string, opts: EditOptions): Promise<UpdateResult> {
+    // Each suggestion is one changed word, as when a person retypes it; a direct edit stays the minimal diff.
+    const diff = opts.trackChanges === true ? computeWordOps : computeOps
+    return this.submitOps(docId, (text) => diff(text, edit(text)), opts)
+  }
+
+  /**
+   * Throw TrackChangesUnsupportedError unless someone can act on tracked
+   * changes to this doc. The project's `features` must report a review panel
+   * (stock Community Edition has none) and track changes on the owner's plan.
+   * The doc must be ShareJS: history-ot carries tracking inside the text
+   * operation and ignores `meta.tc`, so the edit would land untracked.
+   */
+  private assertCanTrackChanges(baseline: DocBaseline): void {
+    const direct = ' A direct edit (trackChanges=false) is possible.'
+    if (baseline.otType === 'history-ot') {
+      // Say whether a direct edit would work instead. By default it would not.
+      const refusal = this.historyOtWriteRefusal(baseline.docId)
+      const directEditPossible = refusal === null
+      const fallback = refusal === null
+        ? direct
+        : refusal instanceof HistoryOtMismatchError
+          ? ' Direct edits to such documents are stopped for this session too (HISTORY_OT_MISMATCH), so describe the change for the user instead.'
+          : ' Direct edits to it are switched off too, unless the user starts the MCP server with OVERLEAF_HISTORY_OT_WRITES=1, so describe the change for them instead.'
+      const path = this.idToPath(baseline.docId)
+      throw new TrackChangesUnsupportedError(
+        `${path ?? 'This doc'} is in a project that uses Overleaf's newer document format (history-OT), where this tool cannot send tracked changes yet.${fallback} Nothing was changed.`,
+        { path, otType: baseline.otType, directEditPossible },
+      )
+    }
+    if (this.trackChangesSkipCheck) return
+    const features = this.project?.features ?? {}
+    const reason = features.trackChangesVisible !== true
+      ? 'This Overleaf server has no review panel (stock Community Edition), so nobody could see, accept or reject tracked changes there.'
+      : features.trackChanges !== true
+        ? 'Track changes is not available in this project: it depends on the project owner\'s Overleaf plan.'
+        : null
+    if (reason === null) return
+    const path = this.idToPath(baseline.docId)
+    throw new TrackChangesUnsupportedError(`${reason}${direct} Nothing was changed.`, {
+      path, trackChanges: features.trackChanges ?? null, trackChangesVisible: features.trackChangesVisible ?? null, directEditPossible: true,
+    })
+  }
+
+  /** Why a direct write to this history-ot doc would be refused (HISTORY_OT_MISMATCH, HISTORY_OT_WRITES_DISABLED), or null. */
+  private historyOtWriteRefusal(docId: string): OverleafError | null {
+    return this.historyOtMismatch ?? (this.historyOtWrites ? null : new HistoryOtWritesDisabledError({ docId }))
   }
 
   /**
@@ -586,52 +677,81 @@ export class OtEngine {
     locate: (text: string) => { start: number; end: number },
   ): Promise<{ p: number; text: string; version: number }> {
     let anchor = { p: 0, text: '' }
-    const previous = this.writeQueues.get(docId) ?? Promise.resolve()
-    const next = previous.catch(() => undefined).then(() =>
+    const result = await this.enqueue(docId, () =>
       this.submitOps(docId, (text) => {
         const span = locate(text)
         anchor = { p: span.start, text: text.slice(span.start, span.end) }
         return [{ c: anchor.text, p: anchor.p, t: threadId }]
       }),
     )
-    this.writeQueues.set(docId, next)
-    try {
-      const result = await next
-      return { ...anchor, version: result.versionAfter }
-    } finally {
-      if (this.writeQueues.get(docId) === next) this.writeQueues.delete(docId)
+    return { ...anchor, version: result.versionAfter }
+  }
+
+  private async submitOps(docId: string, build: (text: string) => OtOp[], opts: EditOptions = {}): Promise<UpdateResult> {
+    const tracked = opts.trackChanges === true
+    let recounted = false
+    for (;;) {
+      const baseline = await this.joinDoc(docId)
+      if (tracked) this.assertCanTrackChanges(baseline)
+      // No awaits from here to the emit: text, version and ops must be consistent.
+      const textBefore = baseline.text
+      const versionBefore = baseline.version
+      // Send what the server will store, not what it will silently rewrite (see sanitizeOps).
+      // (For history-ot this is not cosmetic: the server *rejects* an insert containing a surrogate.)
+      let { ops, replaced: unstorableCodeUnits } = sanitizeOps(build(textBefore))
+      const historyOt = baseline.otType === 'history-ot'
+      if (historyOt) {
+        if (ops.some((op) => op.c !== undefined)) {
+          throw new CommentsUnsupportedError(
+            'This project uses Overleaf\'s newer document format (history-OT), where attaching a comment to text is not supported yet. Editing and reading work; nothing was changed.',
+            { docId, otType: baseline.otType },
+          )
+        }
+        // A text operation is one left-to-right pass; hand-positioned components may not be.
+        if (!isAscending(ops)) ops = computeOps(textBefore, applyTextOps(textBefore, ops))
+      }
+      if (ops.length === 0) {
+        this.reportExternal(docId, textBefore, versionBefore)
+        this.markSeen(docId, textBefore, versionBefore)
+        return { textBefore, textAfter: textBefore, versionBefore, versionAfter: versionBefore, ops, unstorableCodeUnits, tracked: false }
+      }
+      if (tracked) {
+        const path = this.idToPath(docId)
+        const overLimit = trackedLimitError(baseline, ops, path)
+        if (overLimit) {
+          // The bounds never shrink (accepts and rejects are not followed), so rejoin for an exact count
+          // before refusing. Not when the ops are too much on their own, even for a doc without changes or comments.
+          if (recounted || trackedLimitError({ ...baseline, trackedBounds: boundsAtJoin(), comments: [] }, ops, path)) {
+            throw overLimit
+          }
+          recounted = true
+          this.baselines.delete(docId)
+          continue
+        }
+      }
+      if (opts.dryRun) {
+        // As with openDoc, the agent has now seen the doc.
+        if (!this.seen.has(docId)) this.markSeen(docId, textBefore, versionBefore)
+        return {
+          textBefore, textAfter: applyTextOps(textBefore, ops), versionBefore, versionAfter: versionBefore, ops, unstorableCodeUnits, tracked,
+        }
+      }
+      if (historyOt) {
+        const refusal = this.historyOtWriteRefusal(docId)
+        if (refusal) throw refusal
+      }
+      return this.send(baseline, ops, unstorableCodeUnits, tracked)
     }
   }
 
-  private async submitOps(docId: string, build: (text: string) => OtOp[]): Promise<UpdateResult> {
-    const baseline = await this.joinDoc(docId)
-    // No awaits from here to the emit: text, version and ops must be consistent.
-    const textBefore = baseline.text
-    const versionBefore = baseline.version
-    // Send what the server will store, not what it will silently rewrite (see sanitizeOps).
-    // (For history-ot this is not cosmetic: the server *rejects* an insert containing a surrogate.)
-    let { ops, replaced: unstorableCodeUnits } = sanitizeOps(build(textBefore))
+  /**
+   * Emit `ops` and wait for the server to confirm them. The caller builds them
+   * from `baseline` in the same tick, and nothing here awaits before the emit,
+   * so the baseline still has the text and version they were built from.
+   */
+  private async send(baseline: DocBaseline, ops: OtOp[], unstorableCodeUnits: number, tracked: boolean): Promise<UpdateResult> {
+    const { docId, text: textBefore, version: versionBefore } = baseline
     const historyOt = baseline.otType === 'history-ot'
-    if (historyOt && ops.length > 0) {
-      if (this.historyOtMismatch) throw this.historyOtMismatch
-      if (!this.historyOtWrites) throw new HistoryOtWritesDisabledError({ docId })
-    }
-    if (historyOt) {
-      if (ops.some((op) => op.c !== undefined)) {
-        throw new CommentsUnsupportedError(
-          'This project uses Overleaf\'s newer document format (history-OT), where attaching a comment to text is not supported yet. Editing and reading work; nothing was changed.',
-          { docId, otType: baseline.otType },
-        )
-      }
-      // A text operation is one left-to-right pass; hand-positioned components may not be.
-      if (!isAscending(ops)) ops = computeOps(textBefore, applyTextOps(textBefore, ops))
-    }
-    if (ops.length === 0) {
-      this.reportExternal(docId, textBefore, versionBefore)
-      this.markSeen(docId, textBefore, versionBefore)
-      return { textBefore, textAfter: textBefore, versionBefore, versionAfter: versionBefore, ops, unstorableCodeUnits }
-    }
-
     // The applyOtUpdate ack only means real-time queued the op in Redis. The
     // commit confirmation is a later `otUpdateApplied {doc, v}` without `op`
     // (DocumentUpdaterController._applyUpdateFromDocumentUpdater); a rejection
@@ -644,12 +764,15 @@ export class OtEngine {
             'It may or may not have been applied — re-read the doc before retrying.',
         ))
       }, this.writeConfirmTimeoutMs)
-      this.inflightWrites.set(docId, { ops, resolve, reject, timer })
+      this.inflightWrites.set(docId, { ops, tracked, resolve, reject, timer })
     })
     // The engine tracks ShareJS-style components either way; only the wire differs.
     const wireOp = historyOt ? [toTextOperation(ops, textBefore)] : ops
+    // real-time allows nothing in `meta` but `tc`. The engine never resends an
+    // update, so a seed is used once.
+    const update = { doc: docId, op: wireOp, v: versionBefore, ...(tracked ? { meta: { tc: generateIdSeed() } } : {}) }
     this.currentSocket
-      .emitWithAck('applyOtUpdate', docId, { doc: docId, op: wireOp, v: versionBefore })
+      .emitWithAck('applyOtUpdate', docId, update)
       .catch((err: unknown) => {
         this.failInflight(
           docId,
@@ -670,6 +793,7 @@ export class OtEngine {
       versionAfter: after.version,
       ops,
       unstorableCodeUnits,
+      tracked,
     }
   }
 
@@ -750,7 +874,7 @@ export class OtEngine {
         this.reportExternal(docId, baseline.text, baseline.version)
         // inflight.ops has been transformed past every op that beat ours to
         // the server, exactly as the server transformed it.
-        applyToBaseline(baseline, inflight.ops)
+        applyToBaseline(baseline, inflight.ops, inflight.tracked)
         baseline.version += 1
       } catch {
         this.baselines.delete(docId)
@@ -778,7 +902,7 @@ export class OtEngine {
       const historyOt = baseline.otType === 'history-ot'
       const before = baseline.text
       const remoteOps = historyOt ? decodeEditOperations(update.op as unknown[], before) : update.op
-      applyToBaseline(baseline, remoteOps)
+      applyToBaseline(baseline, remoteOps, Boolean(update.meta?.tc))
       baseline.version += 1
       const inflight = this.inflightWrites.get(docId)
       if (inflight) {
@@ -1129,6 +1253,7 @@ export type OtEngineFactory = (projectId: string) => {
   socket: SocketLike
   socketFactory?: () => SocketLike
   historyOtWrites?: boolean
+  trackChangesSkipCheck?: boolean
   reconnectInitialDelayMs?: number
   reconnectMaxAttempts?: number
 }
@@ -1182,12 +1307,12 @@ export class OtEngineRegistry {
   }
 }
 
-interface JoinDocRanges {
-  comments?: Array<{ id: string; op: { c?: string; p: number; t?: string } }>
-}
-
-/** Apply ops to the snapshot text and keep comment anchors attached to their text. */
-function applyToBaseline(baseline: DocBaseline, ops: OtOp[]): void {
+/**
+ * Apply ops to the snapshot text, keep comment anchors attached to their text,
+ * and raise the tracked-change bounds by what the ops can have added
+ * (`tracked`: they were sent as tracked changes).
+ */
+function applyToBaseline(baseline: DocBaseline, ops: OtOp[], tracked: boolean): void {
   baseline.text = applyTextOps(baseline.text, ops)
   for (const op of ops) {
     if (op.c !== undefined) {
@@ -1215,6 +1340,7 @@ function applyToBaseline(baseline: DocBaseline, ops: OtOp[]): void {
       }
     }
   }
+  grow(baseline.trackedBounds, ops, tracked)
 }
 
 /** How often joinDoc is retried when collaborators' history-ot updates cross it ambiguously. */
@@ -1252,14 +1378,20 @@ function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => Error)
 }
 
 /**
- * Overleaf packs UTF-8 doc bytes through latin1 over the Socket.IO transport.
- * Each line comes back as a latin1 string whose char codes are the original
- * UTF-8 byte values; reconstruct UTF-8 by treating the chars as latin1 bytes.
+ * Overleaf packs UTF-8 doc bytes through latin1 over the Socket.IO transport
+ * (joinDoc's lines, and with encodeRanges the text in its ranges). Each string
+ * comes back as latin1 whose char codes are the original UTF-8 byte values;
+ * reconstruct UTF-8 by treating the chars as latin1 bytes.
  *
  * Workshop reference: src/api/socketio.ts joinDoc handler.
  */
-function decodeLatin1Lines(lines: string[]): string {
-  return lines.map((line) => Buffer.from(line, 'latin1').toString('utf-8')).join('\n')
+export function decodeLatin1(s: string): string {
+  return Buffer.from(s, 'latin1').toString('utf-8')
+}
+
+/** A doc's text from joinDoc's latin1-packed lines (see decodeLatin1). */
+export function decodeLatin1Lines(lines: string[]): string {
+  return lines.map(decodeLatin1).join('\n')
 }
 
 /** Apply ops to text locally, mirroring what the server will do. */

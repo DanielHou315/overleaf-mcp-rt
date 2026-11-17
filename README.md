@@ -141,8 +141,8 @@ There are 29 tools. Each takes an optional `host`. The [tool reference](docs/too
 
 | Tool | Purpose |
 |---|---|
-| `overleaf_edit_doc` | Replace exact strings in a document. The recommended way to edit. |
-| `overleaf_write_doc` | Replace a whole document. Refuses to overwrite text the agent hasn't seen. |
+| `overleaf_edit_doc` | Replace exact strings in a document. The recommended way to edit. With `trackChanges`, as suggestions for a person to accept or reject. |
+| `overleaf_write_doc` | Replace a whole document. Refuses to overwrite text the agent hasn't seen. Also takes `trackChanges`. |
 
 **Comments** (overleaf.com and Server Pro)
 
@@ -180,12 +180,14 @@ There are 29 tools. Each takes an optional `host`. The [tool reference](docs/too
 | Read, edit, create, move, delete | ✅ | ✅ | ✅ ² |
 | Compile, log, PDF | ✅ | ✅ | ✅ |
 | Review-panel comments | — ³ | ✅ | ✅ |
+| Edits as tracked changes | — ³ | ✅ | ✅ ⁴ |
 | Login | browser, password or cookie | same | browser or cookie |
 | Behind an auth proxy | ✅ | ✅ | n/a |
 
 ¹ Not tested separately; reports welcome.<br>
 ² Projects that Overleaf has moved to its newer document format are read-only unless you opt in. See [configuration](docs/configuration.md#overleafs-newer-document-format-history-ot).<br>
-³ Stock Community Edition has no review panel, so the comment tools return `COMMENTS_UNSUPPORTED` and change nothing.
+³ Stock Community Edition has no review panel, so the comment tools return `COMMENTS_UNSUPPORTED`, tracked edits `TRACK_CHANGES_UNSUPPORTED`, and nothing is changed.<br>
+⁴ When the project owner's plan includes track changes, and not yet on documents in the newer format. See [tracked changes](docs/tools.md#tracked-changes-suggestions).
 
 ## Why real-time?
 

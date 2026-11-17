@@ -84,6 +84,8 @@ export interface UpdateSchema {
     source: string  // socket.io client publicId
     ts: number      // unix epoch ms
     user_id: string
+    /** Present when the sender tracked the update: the id seed of its changes (see track-changes.ts). */
+    tc?: string
   }
 }
 
@@ -102,6 +104,18 @@ export type JoinDocResponse = [
   version: number,
   /** Pending updates the server has buffered; we don't replay them. */
   updates: UpdateSchema[],
-  /** Optional ranges payload; not consumed in v0.2. */
-  ranges?: unknown,
+  /** The doc's comments and tracked changes, their text latin1-packed like the lines. */
+  ranges?: JoinDocRanges,
 ]
+
+export interface JoinDocRanges {
+  comments?: Array<{ id: string; op: Pick<OtOp, 'p' | 'c' | 't'> }>
+  changes?: TrackedChange[]
+}
+
+/** A tracked change in a ShareJS doc's ranges: an insert or a delete, with the id document-updater gave it. */
+export interface TrackedChange {
+  id: string
+  op: Pick<OtOp, 'p' | 'i' | 'd'>
+  metadata: { user_id: string }
+}

@@ -11,6 +11,7 @@ A comment attaches a discussion thread to a span of text **without changing the 
 
 - **Edit** when the user asked for the change, or it is mechanical (typo, broken reference, compile error).
 - **Comment** when it is the author's decision: claims, numbers, framing, tone, cuts, anything in a co-author's section. Also for questions ("which dataset is this?") and for explaining a non-obvious edit you made.
+- **Suggest** (an edit with `trackChanges: true`, see the editing skill) when you have the exact replacement text and the author should approve it. Like comments, it needs a server with a review panel.
 - When reviewing a document, default to comments, and say in your reply how many you left and where.
 
 ## Signature — required

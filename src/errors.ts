@@ -15,6 +15,8 @@ export type ErrorCode =
   | 'COMMENTS_UNSUPPORTED'
   | 'HISTORY_OT_WRITES_DISABLED'
   | 'HISTORY_OT_MISMATCH'
+  | 'TRACK_CHANGES_UNSUPPORTED'
+  | 'TRACK_CHANGES_LIMIT'
 
 export interface ErrorEnvelope {
   code: ErrorCode
@@ -140,6 +142,18 @@ export class HistoryOtMismatchError extends OverleafError {
   }
 }
 
+export class TrackChangesUnsupportedError extends OverleafError {
+  constructor(message: string, context: Record<string, unknown> = {}) {
+    super('TRACK_CHANGES_UNSUPPORTED', message, context)
+  }
+}
+
+export class TrackChangesLimitError extends OverleafError {
+  constructor(message: string, context: Record<string, unknown> = {}) {
+    super('TRACK_CHANGES_LIMIT', message, context)
+  }
+}
+
 export class DocNotReadError extends OverleafError {
   constructor(message: string, context: Record<string, unknown> = {}) {
     super('DOC_NOT_READ', message, context)
@@ -172,6 +186,10 @@ const HINTS: Partial<Record<ErrorCode, string>> = {
     'Tell the user: their project is on Overleaf\'s newer document format, which this tool can read but only edits when they opt in, by starting the MCP server with OVERLEAF_HISTORY_OT_WRITES=1 (see docs/configuration.md in the project repository; first try it on a scratch file, ideally with nobody else in the doc). Until then, propose the change as text for them to paste.',
   HISTORY_OT_MISMATCH:
     'Stop editing this project and tell the user: after a write, Overleaf\'s copy of the document did not match what this tool expected, so its handling of the newer document format (history-OT) is wrong for this server. The document on Overleaf is intact as Overleaf stored it; re-read it to see the current text. Further writes to history-OT documents are refused for this session. Please report it.',
+  TRACK_CHANGES_UNSUPPORTED:
+    'Tracked changes are not available here: the Overleaf server has no review panel (stock Community Edition; overleaf.com and Server Pro have one), the project owner\'s plan does not include track changes, or the document uses Overleaf\'s newer format (history-OT), where this tool cannot send them yet. Nothing was changed. If the message says a direct edit is possible, ask the user whether to make the edit directly (trackChanges=false); otherwise describe the change in your reply for them to apply.',
+  TRACK_CHANGES_LIMIT:
+    'Overleaf limits a document\'s tracked changes (at most 2000 of them, and pending deletions count towards its length), and going over disconnects everyone in the document or stops them typing, so nothing was sent. The message says which limit. Ask the user to accept or reject pending changes in the review panel first.',
   DOC_NOT_READ:
     'Read the doc first (overleaf_read_doc) so you do not overwrite text you have not seen, or use overleaf_edit_doc for a targeted change. Pass overwrite=true to replace it regardless.',
   OVERLEAF_AUTH_FAILED:

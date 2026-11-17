@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { prng } from './prng.js'
 import { OtEngine } from '../../src/overleaf/ot.js'
-import { FakeOverleaf, connectEngine } from './fake-overleaf.js'
+import { boundsAtJoin } from '../../src/overleaf/track-changes.js'
+import { FakeOverleaf, REVIEW_PANEL, TC_SEED, connectEngine } from './fake-overleaf.js'
 
 /**
  * The bug these guard against: the engine used to ignore collaborators' ops,
@@ -60,9 +61,41 @@ describe('OtEngine live sync with a collaborator', () => {
     expect(server.sock.emitsOf('joinDoc')).toHaveLength(1)
   })
 
-  it('survives a randomized interleaving of human and agent edits without diverging', async () => {
+  it('a tracked edit converges the same way when the human\'s ops, one of them a suggestion of their own, overtake it', async () => {
+    const server = new FakeOverleaf({ d1: 'alpha beta gamma' }, { features: REVIEW_PANEL })
+    const engine = await connectEngine(server)
+    const errors: unknown[] = []
+    server.sock.on('otUpdateError', (e) => errors.push(e))
+    await engine.joinDoc('d1')
+
+    server.holdAgentOps = true
+    const write = engine.updateDoc('d1', (t) => t.replace('gamma', 'GAMMA!'), { trackChanges: true })
+    await opInFlight(server)
+    server.remoteEdit('d1', [{ p: 0, i: '>> ' }])
+    // Away from the agent's edit: RangesTracker merges touching tracked deletes into one change.
+    server.remoteEdit('d1', [{ p: 3, d: 'alpha ' }], { trackChanges: true })
+    server.flush()
+    const result = await write
+
+    expect(result.tracked).toBe(true)
+    expect(server.text('d1')).toBe('>> beta GAMMA!')
+    expect(engine.readDoc('d1')).toBe(server.text('d1'))
+    expect(result.versionAfter).toBe(server.docs.get('d1')!.version)
+    expect(server.sock.emitsOf('joinDoc')).toHaveLength(1)
+    // The seed survived the transform, and the agent's change ids are minted from it. Compared as
+    // a set, since RangesTracker keeps changes sorted by position.
+    const tc = server.sentUpdates()[0]!.meta?.tc as string
+    expect(tc).toMatch(TC_SEED)
+    const agentIds = server.changes('d1').filter((c) => c.metadata.user_id === 'u-agent').map((c) => c.id)
+    expect(agentIds.sort()).toEqual([`${tc}000001`, `${tc}000002`])
+    expect(server.changes('d1').filter((c) => c.metadata.user_id === 'u-human')).toHaveLength(1)
+    expect(errors).toEqual([])
+    expect(server.invalidUpdates).toEqual([])
+  })
+
+  it.each([false, true])('survives a randomized interleaving of human and agent edits without diverging (trackChanges: %s)', async (trackChanges) => {
     const rand = prng(42)
-    const server = new FakeOverleaf({ d1: 'lorem ipsum dolor sit amet, consectetur adipiscing elit' })
+    const server = new FakeOverleaf({ d1: 'lorem ipsum dolor sit amet, consectetur adipiscing elit' }, { features: REVIEW_PANEL })
     const engine = await connectEngine(server)
     const errors: unknown[] = []
     server.sock.on('otUpdateError', (e) => errors.push(e))
@@ -87,7 +120,7 @@ describe('OtEngine live sync with a collaborator', () => {
         return rand(3) === 0 && t.length > 6
           ? t.slice(0, Math.min(p, t.length - 3)) + t.slice(Math.min(p, t.length - 3) + 3)
           : `${t.slice(0, p)}[a${round}]${t.slice(p)}`
-      })
+      }, { trackChanges })
       if (server.holdAgentOps) await opInFlight(server)
       for (let k = rand(4); k > 0; k--) {
         humanEdit()
@@ -103,6 +136,22 @@ describe('OtEngine live sync with a collaborator', () => {
     expect(raced, 'human edits that landed while an agent op was in flight').toBeGreaterThan(50)
     expect(errors).toEqual([])
     expect(server.sock.emitsOf('joinDoc')).toHaveLength(1)
+    expect(server.invalidUpdates).toEqual([])
+    const seeds = server.sentUpdates().map((u) => u.meta?.tc)
+    if (trackChanges) {
+      expect(seeds.every((s) => typeof s === 'string' && TC_SEED.test(s))).toBe(true)
+      expect(new Set(seeds).size, 'a fresh seed per update').toBe(150)
+      // One per component the server applied; a concurrent insert can split one of our deletes in two.
+      expect(server.changes('d1').length).toBeGreaterThanOrEqual(150)
+      // The engine's bounds never fall below what the server stored, transforms included.
+      const bounds = engine.getBaseline('d1')!.trackedBounds
+      const stored = boundsAtJoin(server.changes('d1'))
+      expect(bounds.changes).toBeGreaterThanOrEqual(stored.changes)
+      expect(bounds.deletedLength).toBeGreaterThanOrEqual(stored.deletedLength)
+    } else {
+      expect(seeds.every((s) => s === undefined)).toBe(true)
+      expect(server.changes('d1')).toEqual([])
+    }
   })
 
   it('replays updates that overtake the joinDoc response and drops ones already in the snapshot', async () => {
