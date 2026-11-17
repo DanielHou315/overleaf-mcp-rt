@@ -4,25 +4,26 @@ All notable changes to `overleaf-mcp-rt`. The format follows [Keep a Changelog](
 
 ## [Unreleased]
 
-### Fixed
-
-- **Compiling a project whose main document is not `main.tex` compiled the wrong file — in practice, nothing.** Every compile request carried a hardcoded `rootResourcePath: "main.tex"`. Current Overleaf (overleaf.com, and Community Edition / Server Pro as they pick the change up) compiles exactly the path it is given, so `overleaf_compile`, `overleaf_read_compile_log` and `overleaf_download_pdf` answered `failure` with an "Emergency stop" log for any project built from `paper.tex`, `thesis.tex`, …, and for one with a stray `main.tex` they built that instead of the paper. The server now sends what the editor sends: the project's own main document, by id and by path, read from the live project state (so it follows renames, moves and a collaborator changing the setting). Reproduced, and the fix verified, on overleaf.com (a project built from `paper.tex`: `failure` before, a 36-page PDF after); servers that predate the field ignore it and use the project's setting.
+## [2.3.0] — 2026-11-17
 
 ### Added
 
-- **Project lifecycle tools**: `overleaf_create_project` (blank or example), `overleaf_clone_project`, `overleaf_rename_project`, `overleaf_archive_project` / `overleaf_unarchive_project` and `overleaf_trash_project` / `overleaf_untrash_project`. There is deliberately no permanent delete; trash is reversible. A name Overleaf refuses comes back with Overleaf's own reason, and an unknown project is `NOT_FOUND`.
-- **`overleaf_list_projects` reports `archived` and `trashed`** for each project, so an agent can see what these tools did and find a project to restore.
-- **Edits as tracked changes (suggestions)** ([#17](https://github.com/DanielHou315/overleaf-mcp-rt/issues/17)). With `trackChanges: true`, `overleaf_edit_doc` and `overleaf_write_doc` send the edit the way the editor does with Track Changes on: each insertion and deletion appears in the review panel, and a person accepts or rejects it. Results say `tracked: true` and add a note that the document text already contains the suggestions. `OVERLEAF_TRACK_CHANGES=1` makes this the session default; a call with `trackChanges: false` still edits directly. A tracked edit is diffed by word, so a reworded sentence arrives as one suggestion per changed word rather than as scattered letters; direct edits stay a minimal character diff. Each tracked update carries a fresh id seed (`meta.tc`) in the format real-time validates. Tracked changes are credited to the logged-in account, which is often the person's own, and unlike comments they cannot carry a signature.
-- **`TRACK_CHANGES_UNSUPPORTED`**: a tracked edit is refused before anything is sent where nobody could review it. That covers a server without a review panel (stock Community Edition stores tracked changes but cannot show, accept or reject them), a project whose owner's plan lacks the feature, and documents in Overleaf's newer format (history-OT), whose server ignores the id seed and would store the edit untracked. The message says whether a direct edit is possible instead (on history-OT documents it is not unless writes to them are enabled); `dryRun` reports it too.
-- **`TRACK_CHANGES_LIMIT`**: Overleaf stores at most 2000 tracked changes per document, and at most 3 MB of them together with the comments; an update that goes over fails only after it was accepted, which disconnects everyone in the document. Pending deletions also count towards the 2 MB document length past which the editor stops everyone typing. The server keeps upper bounds of all three for each open document, counts again from a fresh snapshot when a tracked edit could get close to one, and refuses it if it still could. `dryRun` runs the same check.
-- `OVERLEAF_TRACK_CHANGES_SKIP_CHECK=1`, for testing only: sends tracked changes even without a review panel, so the live suite can check what a stock Community Edition records.
-- **`rootDoc` on `overleaf_compile`, `overleaf_read_compile_log` and `overleaf_download_pdf`**: compile a particular file (`"talks/slides.tex"`, a chapter that stands on its own) instead of the project's main document, for that call only — the editor's behaviour when a file with `\documentclass` is open. A path that is not a text document of the project is refused (`NOT_FOUND`) before anything is compiled.
-- **`overleaf_get_project_tree` reports how the project is set up to compile**: `rootDoc` (the main document's path; `null` if none is set), `compiler` and `imageName` (TeX Live release). Changes made in someone's editor menu arrive live and are announced in `<external-changes>`.
-- **`overleaf_compile` says how the build went, not just where its files are**: the `rootDoc` it compiled, `compiler`, `outputFiles`, and the `errors` and `warnings` from `output.log` with project file, line and the offending source text (capped at 20 each, with `errorCount` / `warningCount`). Every status other than `success` carries a `message` explaining why there is no PDF (`failure`, `validation-problems` when the project has no main document, `timedout`, `compile-in-progress`, …). `overleaf_read_compile_log` now also returns `status` and `rootDoc`. All additions to existing results; nothing was removed.
+- **Tracked changes**: `trackChanges: true` on `overleaf_edit_doc` / `overleaf_write_doc` sends edits as suggestions to accept or reject in the review panel (`OVERLEAF_TRACK_CHANGES=1` for a session default). Refused up front where nobody could review them (`TRACK_CHANGES_UNSUPPORTED`) or near Overleaf's limits (`TRACK_CHANGES_LIMIT`). ([#21](https://github.com/DanielHou315/overleaf-mcp-rt/pull/21))
+- **Project lifecycle tools**: create, clone, rename, archive / unarchive and trash / untrash projects; `overleaf_list_projects` reports `archived` and `trashed`. ([#16](https://github.com/DanielHou315/overleaf-mcp-rt/pull/16))
+- **Compiling**: `rootDoc` compiles a file other than the main document; compile results include errors and warnings with file and line; the project tree reports the main document, compiler and TeX Live image. ([#18](https://github.com/DanielHou315/overleaf-mcp-rt/pull/18))
+
+### Fixed
+
+- Compiling a project whose main document is not `main.tex` compiled the wrong file. ([#18](https://github.com/DanielHou315/overleaf-mcp-rt/pull/18))
 
 ### Changed
 
-- Documentation reorganised. The README is now a short getting-started guide; login and configuration details, the tool reference (edit matching, `<external-changes>`, error codes) and contributor notes moved to `docs/configuration.md`, `docs/tools.md` and `docs/development.md`. `AGENTS.md` is now the single contributor guide (`CLAUDE.md` is gone). The `HISTORY_OT_WRITES_DISABLED` hint points at the new location.
+- Documentation reorganised: a short README, with details in `docs/`. ([#20](https://github.com/DanielHou315/overleaf-mcp-rt/pull/20))
+
+### New Contributors
+
+- [KingHacker9000](https://github.com/KingHacker9000) made their first contribution in [#16](https://github.com/DanielHou315/overleaf-mcp-rt/pull/16)
+- [hamodazn](https://github.com/hamodazn) made their first contribution in [#21](https://github.com/DanielHou315/overleaf-mcp-rt/pull/21)
 
 ## [2.2.0] — 2026-09-20
 
