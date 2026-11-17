@@ -1,9 +1,10 @@
 # Tool reference
 
-The [README](../README.md#tools) lists every tool. This page covers the details: how edits are matched, what comes back, how collaborators' changes are reported, the comment signature, compiling, and the error envelope.
+The [README](../README.md#tools) lists every tool. This page covers the details: how edits are matched, what comes back, tracked changes, how collaborators' changes are reported, the comment signature, compiling, and the error envelope.
 
 - [Editing with `overleaf_edit_doc`](#editing-with-overleaf_edit_doc)
 - [Whole-document writes](#whole-document-writes)
+- [Tracked changes (suggestions)](#tracked-changes-suggestions)
 - [Reading files](#reading-files)
 - [Working alongside humans: `<external-changes>`](#working-alongside-humans-external-changes)
 - [Comments and the signature rule](#comments-and-the-signature-rule)
@@ -29,7 +30,7 @@ It returns a write summary plus a unified `diff` of what changed.
 - Edits apply **in order**, each to the result of the previous one, and **atomically**: if any edit fails, nothing is sent.
 - Text is addressed by content, never by offset, and matched against the **live** doc at the instant the op is sent. An agent edit therefore composes with whatever a person is typing elsewhere in the file. If the person changed the very text being targeted, the call fails with `EDIT_NO_MATCH`, reports the closest region, and the attached `<external-changes>` block shows their edit.
 - If `old_string` isn't found verbatim, a match that differs only in trailing whitespace, indentation or line wrapping is accepted when it is unambiguous (reported in `notes`). The replaced span is always the doc's real text.
-- The op sent to Overleaf is the minimal character diff, so collaborators' cursors and selections outside the changed characters are undisturbed.
+- The op sent to Overleaf is the minimal character diff (a [tracked edit](#tracked-changes-suggestions) is diffed by word), so collaborators' cursors and selections outside the changed characters are undisturbed.
 - To insert, use an anchor as `old_string` and repeat it in `new_string`. To delete, pass `new_string: ""`.
 - `dryRun: true` returns the diff and the resolved OT ops without sending anything.
 
@@ -38,6 +39,25 @@ Legacy v1.1 edits carrying a `mode` field (`replace`, `insert_before`, `insert_a
 ## Whole-document writes
 
 `overleaf_write_doc` replaces a whole doc; only the differing characters are sent. It is refused if the agent hasn't read the doc this session (`DOC_NOT_READ`) or a collaborator edited it since (`DOC_CHANGED_EXTERNALLY`), unless `overwrite: true`. Prefer `overleaf_edit_doc`.
+
+## Tracked changes (suggestions)
+
+With `trackChanges: true`, `overleaf_edit_doc` and `overleaf_write_doc` send the edit as tracked changes, the way the editor does when Track Changes is on: each insertion and deletion appears in the review panel, and a person accepts or rejects it. Use it when the user wants to approve the agent's edits before they count.
+
+```json
+{ "projectId": "…", "path": "main.tex", "trackChanges": true, "edits": [
+  { "old_string": "Results are good.", "new_string": "Results are excellent." }
+] }
+```
+
+- Each changed word becomes one suggestion that replaces it whole, as when a person selects the word and retypes it.
+- The result says `tracked: true` and adds a note. `dryRun: true` previews a tracked edit, including any refusal, without sending it.
+- **The text already contains the suggestions.** Overleaf applies a tracked insertion to the document and keeps a tracked deletion's text only in the change, so reads show the document as if the suggestions were accepted. Rejecting one restores the text, and the agent sees that in `<external-changes>`.
+- `OVERLEAF_TRACK_CHANGES=1` makes tracked changes the session default ([configuration](configuration.md#credentials-file-and-environment-variables)); a call with `trackChanges: false` still edits directly. The Track Changes switch in the editor applies to people's own typing, not to the agent.
+- **Where it works:** overleaf.com and Server Pro, in projects whose owner's plan includes track changes. Stock Community Edition stores tracked changes but has no review panel to show, accept or reject them. There, and on documents in [Overleaf's newer format](configuration.md#overleafs-newer-document-format-history-ot) (which encodes tracking differently), the call fails with `TRACK_CHANGES_UNSUPPORTED` and nothing is sent.
+- **Attribution.** Overleaf credits a tracked change to the logged-in account, which is often the person's own. Unlike a comment it cannot carry a `Co-authored by` signature, so the review panel does not show which suggestions came from the agent.
+- **Other people's suggestions.** Deleting text that someone else suggested inserting removes their suggestion; Overleaf counts it as rejected and does not record a suggested deletion.
+- **Limits.** Overleaf keeps at most 2000 tracked changes per document, and at most 3 MB of them together with the comments; an update that would go over fails only after it was accepted, which disconnects everyone in the document. Pending deletions also count towards a document's length: the editor stops everyone typing once text plus pending deletions reach 2 MB (the default `max_doc_length`), and a tracked replacement adds everything it inserts to that total. The server keeps upper bounds of all three for each open document and refuses a tracked edit that could get close to any of them (`TRACK_CHANGES_LIMIT`, nothing sent; `context.limit` says which). Before refusing it counts again from a fresh snapshot, because changes accepted or rejected since are not followed live.
 
 ## Reading files
 
@@ -142,5 +162,7 @@ Every tool error is JSON inside an MCP `text` content block, with `isError: true
 | `DOC_NOT_READ` | `overleaf_write_doc` on a non-empty doc the agent never read. |
 | `OT_DELETE_MISMATCH` | A `d`-string in `raw_ops` mode didn't match the doc at `p`. Checked before anything is sent. |
 | `COMMENTS_UNSUPPORTED` | The instance has no comment threads (stock Community Edition). Nothing was changed. |
+| `TRACK_CHANGES_UNSUPPORTED` | `trackChanges` where nobody could review the changes: no review panel (stock Community Edition), the project owner's plan lacks track changes, or the document uses Overleaf's newer format. Nothing was sent. |
+| `TRACK_CHANGES_LIMIT` | A tracked edit could take the document past one of Overleaf's limits on tracked changes: 2000 of them, 3 MB of them with the comments, or 2 MB of text plus pending deletions (`context.limit`: `changes`, `rangesSize`, `docLength`). Nothing was sent; accept or reject pending changes first. |
 | `HISTORY_OT_WRITES_DISABLED` | The document uses [Overleaf's newer format](configuration.md#overleafs-newer-document-format-history-ot); reading works, writing needs `OVERLEAF_HISTORY_OT_WRITES=1`. Nothing was sent. |
 | `HISTORY_OT_MISMATCH` | After a write to such a document, Overleaf's copy differed from what was predicted. Further history-OT writes are refused for the session; please report it. |

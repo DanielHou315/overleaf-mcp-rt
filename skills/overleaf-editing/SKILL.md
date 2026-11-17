@@ -1,6 +1,6 @@
 ---
 name: overleaf-editing
-description: How to read and edit Overleaf documents through the overleaf_* MCP tools without disrupting people who have the project open. Use whenever you are about to read, edit, create, move or delete files in an Overleaf project, or when a tool result contains an <external-changes> block, EDIT_NO_MATCH, EDIT_AMBIGUOUS, DOC_CHANGED_EXTERNALLY or DOC_NOT_READ.
+description: How to read and edit Overleaf documents through the overleaf_* MCP tools without disrupting people who have the project open, including suggesting edits as tracked changes for a person to accept or reject. Use whenever you are about to read, edit, create, move or delete files in an Overleaf project, when the user wants to approve your edits first, or when a tool result contains an <external-changes> block, EDIT_NO_MATCH, EDIT_AMBIGUOUS, DOC_CHANGED_EXTERNALLY, DOC_NOT_READ, TRACK_CHANGES_UNSUPPORTED or TRACK_CHANGES_LIMIT.
 ---
 
 # Editing Overleaf documents
@@ -22,6 +22,17 @@ These are **live, shared documents**. A person may be typing in the same file ri
 - Insert by repeating an anchor: `old_string: "\\section{Results}"`, `new_string: "\\section{Results}\nNew paragraph."`. Delete with `new_string: ""`.
 - JSON needs LaTeX backslashes doubled: `\\cite{x}`.
 - Overleaf cannot store emoji or other characters outside the Basic Multilingual Plane; they are stored as `\uFFFD` and the result's `notes` says so. Use a LaTeX command instead.
+
+## Suggesting instead of editing: `trackChanges`
+
+When the user wants to approve your edits before they take effect (they ask for suggestions or tracked changes, or to review what you change), pass `trackChanges: true` to `overleaf_edit_doc` (or `overleaf_write_doc`). Each insertion and deletion then waits in the review panel for them to accept or reject, and the result says `tracked: true`.
+
+- The doc text already shows your suggestions: insertions are in it, deleted text is gone. Do not apply them again. If someone rejects one, the restored text arrives in `<external-changes>`; do not redo it.
+- Leave other people's pending suggestions alone unless asked: deleting text someone suggested rejects their suggestion.
+- Suggestions appear under the logged-in account, usually the user's own, and cannot be signed. Say in your reply which suggestions are yours.
+- If results say `tracked: true` without you asking, the session tracks by default; pass `trackChanges: false` only when the user wants a direct edit.
+- `TRACK_CHANGES_UNSUPPORTED`: nobody could review tracked changes here (no review panel, the owner's plan, or the newer document format). Nothing was changed. If the message says a direct edit is possible, ask whether to make it; otherwise describe the change in your reply.
+- `TRACK_CHANGES_LIMIT`: the document has too many pending changes, or too much pending text. Nothing was sent. Ask the user to accept or reject some first; an untracked edit is no way around it.
 
 ## `<external-changes>` — read it every time
 

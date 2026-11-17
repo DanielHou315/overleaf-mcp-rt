@@ -48,6 +48,8 @@ The single-host file written by earlier versions is still read, and the next `lo
 | `OVERLEAF_EXTRA_HEADERS` | JSON object of headers for a reverse proxy (see below). |
 | `OVERLEAF_BROWSER` | Browser binary for `login --browser`. |
 | `OVERLEAF_HISTORY_OT_WRITES` | `1` enables editing documents on Overleaf's newer format (see below). |
+| `OVERLEAF_TRACK_CHANGES` | `1` sends edits as [tracked changes](tools.md#tracked-changes-suggestions) by default; a call with `trackChanges: false` still edits directly. |
+| `OVERLEAF_TRACK_CHANGES_SKIP_CHECK` | **Testing only, not for normal use.** `1` sends tracked changes even where the server reports no review panel (stock Community Edition), where nobody can see, accept or reject them. The live suite uses it on throw-away instances. |
 
 ## Multiple hosts
 
